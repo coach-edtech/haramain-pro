@@ -576,17 +576,78 @@ class PanicService {
     return history;
   }
 
-  /// Update panic status
-  Future<void> updatePanicStatus(String alertId, PanicStatus status, {String? responderId, String? responseType}) async {
+  /// Update panic status in Supabase + local cache
+  /// Returns true if update succeeded
+  Future<bool> updatePanicStatus(
+    String alertId,
+    PanicStatus status, {
+    String? responderId,
+    String? responseType,
+  }) async {
+    // If this is a responder action, call the Edge Function
+    if (status == PanicStatus.responded && responderId != null && responseType != null) {
+      try {
+        final response = await Supabase.instance.client.functions.invoke(
+          'panic-response',
+          body: {
+            'alert_id': alertId,
+            'responder_id': responderId,
+            'action': responseType,
+          },
+        );
+
+        if (response.data == null) {
+          debugPrint('panic-response returned null data');
+          // Fall through to local update
+        } else {
+          final data = response.data as Map<String, dynamic>;
+          debugPrint('panic-response response: $data');
+          if (data['status'] == 'success') {
+            // Update local cache with server-confirmed data
+            await _updateLocalPanicHistory(
+              alertId,
+              status: status,
+              responderId: responderId,
+              responseType: responseType,
+            );
+            return true;
+          } else {
+            debugPrint('panic-response failed: ${data['error']}');
+            // Fall through to local update (optimistic)
+          }
+        }
+      } catch (e) {
+        debugPrint('panic-response edge function call failed: $e');
+        // Fall through to local update
+      }
+    }
+
+    // Local-only update (for non-responder statuses or when edge function fails)
+    await _updateLocalPanicHistory(
+      alertId,
+      status: status,
+      responderId: responderId,
+      responseType: responseType,
+    );
+    return true;
+  }
+
+  /// Update local SharedPreferences history only
+  Future<void> _updateLocalPanicHistory(
+    String alertId, {
+    required PanicStatus status,
+    String? responderId,
+    String? responseType,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final historyKey = 'panic_history';
-    
+
     final historyJson = prefs.getString(historyKey);
     if (historyJson == null) return;
-    
+
     final List<dynamic> decoded = jsonDecode(historyJson);
     List<PanicAlert> history = decoded.map((e) => PanicAlert.fromJson(e)).toList();
-    
+
     final index = history.indexWhere((a) => a.id == alertId);
     if (index >= 0) {
       history[index] = history[index].copyWith(
@@ -594,11 +655,12 @@ class PanicService {
         responderId: responderId,
         responseType: responseType,
       );
-      
+
       await prefs.setString(
         historyKey,
         jsonEncode(history.map((a) => a.toJson()).toList()),
       );
+      debugPrint('Updated local panic history for alert $alertId');
     }
   }
 }
