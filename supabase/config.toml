@@ -22,11 +22,11 @@ smtp_port = 54325
 pop3_port = 54326
 
 [functions]
-deno_runtime_version = "1.35.2"
+[functions.deno_runtime]
+version = "1.35.2"
 
 [auth]
 enabled = true
-port = 54321
 site_url = "http://localhost:54321"
 additional_redirect_urls = ["https://localhost:54321"]
 jwt_expiry = 3600
