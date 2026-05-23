@@ -1,0 +1,440 @@
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
+import '../../services/location_service.dart';
+import '../../config/constants.dart';
+
+/// Panic alert status
+enum PanicStatus {
+  pending,
+  sent,
+  failed,
+  responded,
+  resolved,
+}
+
+/// Panic alert data model
+class PanicAlert {
+  final String id;
+  final String jamaaahId;
+  final String grupId;
+  final double latitude;
+  final double longitude;
+  final DateTime timestamp;
+  final PanicStatus status;
+  final String? responderId;
+  final String? responseType;
+
+  const PanicAlert({
+    required this.id,
+    required this.jamaaahId,
+    required this.grupId,
+    required this.latitude,
+    required this.longitude,
+    required this.timestamp,
+    this.status = PanicStatus.pending,
+    this.responderId,
+    this.responseType,
+  });
+
+  factory PanicAlert.create({
+    required String jamaaahId,
+    required String grupId,
+    required LocationData location,
+  }) {
+    return PanicAlert(
+      id: const Uuid().v4(),
+      jamaaahId: jamaaahId,
+      grupId: grupId,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      timestamp: location.timestamp,
+      status: PanicStatus.pending,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'jamaah_id': jamaaahId,
+      'grup_id': grupId,
+      'lat': latitude,
+      'lng': longitude,
+      'timestamp': timestamp.toIso8601String(),
+      'status': status.name,
+      'responder_id': responderId,
+      'response_type': responseType,
+    };
+  }
+
+  factory PanicAlert.fromJson(Map<String, dynamic> json) {
+    return PanicAlert(
+      id: json['id'] as String,
+      jamaaahId: json['jamaah_id'] as String,
+      grupId: json['grup_id'] as String,
+      latitude: (json['lat'] as num).toDouble(),
+      longitude: (json['lng'] as num).toDouble(),
+      timestamp: DateTime.parse(json['timestamp'] as String),
+      status: PanicStatus.values.firstWhere(
+        (e) => e.name == json['status'],
+        orElse: () => PanicStatus.pending,
+      ),
+      responderId: json['responder_id'] as String?,
+      responseType: json['response_type'] as String?,
+    );
+  }
+
+  PanicAlert copyWith({
+    String? id,
+    String? jamaaahId,
+    String? grupId,
+    double? latitude,
+    double? longitude,
+    DateTime? timestamp,
+    PanicStatus? status,
+    String? responderId,
+    String? responseType,
+  }) {
+    return PanicAlert(
+      id: id ?? this.id,
+      jamaaahId: jamaaahId ?? this.jamaaahId,
+      grupId: grupId ?? this.grupId,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      timestamp: timestamp ?? this.timestamp,
+      status: status ?? this.status,
+      responderId: responderId ?? this.responderId,
+      responseType: responseType ?? this.responseType,
+    );
+  }
+
+  @override
+  String toString() {
+    return 'PanicAlert(id: $id, jamaah: $jamaaahId, grup: $grupId, lat: $latitude, lng: $longitude, status: ${status.name})';
+  }
+}
+
+/// Panic service result
+class PanicResult {
+  final bool success;
+  final String? alertId;
+  final String? error;
+  final bool usedSmsFallback;
+
+  const PanicResult({
+    required this.success,
+    this.alertId,
+    this.error,
+    this.usedSmsFallback = false,
+  });
+}
+
+/// Response action types
+class PanicResponseAction {
+  static const String stayJemput = 'stay_jemput';
+  static const String sayaDiSini = 'saya_di_sini';
+  static const String telepon = 'telepon';
+}
+
+/// Panic service for sending and managing panic alerts
+class PanicService {
+  static final PanicService _instance = PanicService._internal();
+  static PanicService get instance => _instance;
+
+  PanicService._internal();
+
+  static const String _offlineQueueKey = 'panic_offline_queue';
+  static const int _maxRetries = 3;
+  
+  // Exponential backoff delays: 1s, 2s, 4s
+  static const List<int> _backoffDelays = [1000, 2000, 4000];
+
+  final LocationService _locationService = LocationService.instance;
+
+  /// Send panic alert with retry logic and offline queue
+  /// Returns PanicResult indicating success or failure
+  Future<PanicResult> sendPanic({
+    required String jamaahId,
+    required String grupId,
+    LocationData? coordinates,
+  }) async {
+    // Get current location if not provided
+    LocationData? location = coordinates;
+    if (location == null) {
+      location = await _locationService.getCurrentLocation();
+      if (location == null) {
+        return const PanicResult(
+          success: false,
+          error: 'Failed to get location. Please enable location services.',
+        );
+      }
+    }
+
+    // Create panic alert
+    final alert = PanicAlert.create(
+      jamaaahId: jamaahId,
+      grupId: grupId,
+      location: location,
+    );
+
+    debugPrint('Sending panic alert: ${alert.id}');
+
+    // Try to send with retries
+    for (int attempt = 0; attempt <= _maxRetries; attempt++) {
+      try {
+        // Attempt to send via FCM/Critical Alert
+        final sent = await _sendViaFcm(alert);
+        
+        if (sent) {
+          debugPrint('Panic alert sent successfully via FCM');
+          // Remove from offline queue if it was there
+          await _removeFromOfflineQueue(alert.id);
+          return PanicResult(success: true, alertId: alert.id);
+        }
+      } catch (e) {
+        debugPrint('FCM send attempt $attempt failed: $e');
+      }
+
+      // If not last attempt, wait with exponential backoff
+      if (attempt < _maxRetries) {
+        final delayMs = _backoffDelays[attempt];
+        debugPrint('Retrying in ${delayMs}ms...');
+        await Future.delayed(Duration(milliseconds: delayMs));
+      }
+    }
+
+    // All FCM attempts failed, try SMS fallback
+    debugPrint('FCM failed after $_maxRetries retries, attempting SMS fallback');
+    
+    try {
+      final smsResult = await _sendViaSms(alert);
+      if (smsResult) {
+        await _removeFromOfflineQueue(alert.id);
+        return PanicResult(
+          success: true,
+          alertId: alert.id,
+          usedSmsFallback: true,
+        );
+      }
+    } catch (e) {
+      debugPrint('SMS fallback also failed: $e');
+    }
+
+    // Both FCM and SMS failed, add to offline queue
+    debugPrint('Adding panic alert to offline queue');
+    await _addToOfflineQueue(alert);
+    
+    return PanicResult(
+      success: false,
+      alertId: alert.id,
+      error: 'Failed to send panic alert. Added to offline queue and will retry automatically.',
+    );
+  }
+
+  /// Send panic via FCM (simulated - replace with actual FCM implementation)
+  Future<bool> _sendViaFcm(PanicAlert alert) async {
+    // TODO: Implement actual FCM/Critical Alert sending
+    // For now, simulate network call
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    // Simulate success (in production, this would call the backend API)
+    debugPrint('FCM payload: ${jsonEncode(alert.toJson())}');
+    
+    // Return true to simulate successful send
+    // In production, check actual response from FCM
+    return true;
+  }
+
+  /// Send panic via SMS fallback using Twilio/Nexmo
+  Future<bool> _sendViaSms(PanicAlert alert) async {
+    // TODO: Implement actual SMS sending via Twilio/Nexmo
+    // For now, simulate SMS send
+    
+    // In production, this would:
+    // 1. Call Twilio/Nexmo API
+    // 2. Send SMS to emergency contacts with alert details
+    // 3. Include coordinates link (e.g., Google Maps URL)
+    
+    final googleMapsUrl = 'https://maps.google.com/?q=${alert.latitude},${alert.longitude}';
+    final message = 'PANIC ALERT!\nJamaah ID: ${alert.jamaaahId}\nLocation: $googleMapsUrl';
+    
+    debugPrint('SMS fallback payload: $message');
+    
+    // Simulate SMS API call
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    return true;
+  }
+
+  /// Add alert to offline queue for later retry
+  Future<void> _addToOfflineQueue(PanicAlert alert) async {
+    final prefs = await SharedPreferences.getInstance();
+    final queueJson = prefs.getString(_offlineQueueKey);
+    
+    List<PanicAlert> queue = [];
+    if (queueJson != null) {
+      final List<dynamic> decoded = jsonDecode(queueJson);
+      queue = decoded.map((e) => PanicAlert.fromJson(e)).toList();
+    }
+    
+    // Check if already in queue
+    if (queue.any((a) => a.id == alert.id)) return;
+    
+    queue.add(alert);
+    await prefs.setString(
+      _offlineQueueKey,
+      jsonEncode(queue.map((a) => a.toJson()).toList()),
+    );
+    
+    debugPrint('Added alert ${alert.id} to offline queue. Queue size: ${queue.length}');
+  }
+
+  /// Remove alert from offline queue
+  Future<void> _removeFromOfflineQueue(String alertId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final queueJson = prefs.getString(_offlineQueueKey);
+    
+    if (queueJson == null) return;
+    
+    final List<dynamic> decoded = jsonDecode(queueJson);
+    List<PanicAlert> queue = decoded.map((e) => PanicAlert.fromJson(e)).toList();
+    
+    queue.removeWhere((a) => a.id == alertId);
+    
+    await prefs.setString(
+      _offlineQueueKey,
+      jsonEncode(queue.map((a) => a.toJson()).toList()),
+    );
+    
+    debugPrint('Removed alert $alertId from offline queue');
+  }
+
+  /// Get all alerts in offline queue
+  Future<List<PanicAlert>> getOfflineQueue() async {
+    final prefs = await SharedPreferences.getInstance();
+    final queueJson = prefs.getString(_offlineQueueKey);
+    
+    if (queueJson == null) return [];
+    
+    final List<dynamic> decoded = jsonDecode(queueJson);
+    return decoded.map((e) => PanicAlert.fromJson(e)).toList();
+  }
+
+  /// Process offline queue - retry all pending alerts
+  Future<void> processOfflineQueue() async {
+    final queue = await getOfflineQueue();
+    
+    if (queue.isEmpty) {
+      debugPrint('Offline queue is empty, nothing to process');
+      return;
+    }
+    
+    debugPrint('Processing offline queue with ${queue.length} alerts');
+    
+    for (final alert in queue) {
+      // Try to resend each alert
+      for (int attempt = 0; attempt <= _maxRetries; attempt++) {
+        try {
+          final sent = await _sendViaFcm(alert);
+          if (sent) {
+            await _removeFromOfflineQueue(alert.id);
+            debugPrint('Successfully resent offline alert: ${alert.id}');
+            break;
+          }
+        } catch (e) {
+          debugPrint('Resend attempt $attempt failed for ${alert.id}: $e');
+        }
+        
+        if (attempt < _maxRetries) {
+          await Future.delayed(Duration(milliseconds: _backoffDelays[attempt]));
+        }
+      }
+    }
+  }
+
+  /// Save panic history
+  Future<void> savePanicHistory(PanicAlert alert) async {
+    final prefs = await SharedPreferences.getInstance();
+    final historyKey = 'panic_history';
+    
+    final historyJson = prefs.getString(historyKey);
+    List<PanicAlert> history = [];
+    
+    if (historyJson != null) {
+      final List<dynamic> decoded = jsonDecode(historyJson);
+      history = decoded.map((e) => PanicAlert.fromJson(e)).toList();
+    }
+    
+    // Add or update alert in history
+    final existingIndex = history.indexWhere((a) => a.id == alert.id);
+    if (existingIndex >= 0) {
+      history[existingIndex] = alert;
+    } else {
+      history.insert(0, alert); // Add to beginning
+    }
+    
+    // Keep only last 100 entries
+    if (history.length > 100) {
+      history = history.sublist(0, 100);
+    }
+    
+    await prefs.setString(
+      historyKey,
+      jsonEncode(history.map((a) => a.toJson()).toList()),
+    );
+  }
+
+  /// Get panic history
+  Future<List<PanicAlert>> getPanicHistory({DateTime? fromDate, DateTime? toDate}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final historyKey = 'panic_history';
+    
+    final historyJson = prefs.getString(historyKey);
+    if (historyJson == null) return [];
+    
+    final List<dynamic> decoded = jsonDecode(historyJson);
+    List<PanicAlert> history = decoded.map((e) => PanicAlert.fromJson(e)).toList();
+    
+    // Filter by date if provided
+    if (fromDate != null) {
+      history = history.where((a) => a.timestamp.isAfter(fromDate)).toList();
+    }
+    if (toDate != null) {
+      history = history.where((a) => a.timestamp.isBefore(toDate)).toList();
+    }
+    
+    return history;
+  }
+
+  /// Update panic status
+  Future<void> updatePanicStatus(String alertId, PanicStatus status, {String? responderId, String? responseType}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final historyKey = 'panic_history';
+    
+    final historyJson = prefs.getString(historyKey);
+    if (historyJson == null) return;
+    
+    final List<dynamic> decoded = jsonDecode(historyJson);
+    List<PanicAlert> history = decoded.map((e) => PanicAlert.fromJson(e)).toList();
+    
+    final index = history.indexWhere((a) => a.id == alertId);
+    if (index >= 0) {
+      history[index] = history[index].copyWith(
+        status: status,
+        responderId: responderId,
+        responseType: responseType,
+      );
+      
+      await prefs.setString(
+        historyKey,
+        jsonEncode(history.map((a) => a.toJson()).toList()),
+      );
+    }
+  }
+}
+
+// Debug print helper
+void debugPrint(String message) {
+  // ignore: avoid_print
+  print('[PanicService] $message');
+}

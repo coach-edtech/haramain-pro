@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "752326895802",
+    "project_id": "haramain-pro",
+    "storage_bucket": "haramain-pro.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:752326895802:android:065ebb8fe4845bcd96ba83",
+        "android_client_info": {
+          "package_name": "com.haramain.haramain_pro"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDy2L1Nfg8EyQzIqxzqSJscNDOdrj5c4HY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

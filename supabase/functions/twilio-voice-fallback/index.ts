@@ -1,0 +1,242 @@
+// Edge Function: twilio-voice-fallback
+// Layer 2 voice call fallback for panic alerts when FCM fails or as parallel notification
+// Uses Twilio REST API via fetch() - no external npm packages
+
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': 'https://haramain.pro',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, X-Webhook-Secret',
+}
+
+interface VoiceFallbackPayload {
+  jamaaah_id: string
+  grup_id: string
+  latitude: number
+  longitude: number
+  timestamp: string
+  alert_id?: string
+  nama_jamaah?: string
+}
+
+// Twilio credentials from environment
+const TWILIO_ACCOUNT_SID = Deno.env.get('TWILIO_ACCOUNT_SID') || ''
+const TWILIO_AUTH_TOKEN = Deno.env.get('TWILIO_AUTH_TOKEN') || ''
+const TWILIO_PHONE_NUMBER = Deno.env.get('TWILIO_PHONE_NUMBER') || ''
+const WEBHOOK_SECRET = Deno.env.get('PANIC_WEBHOOK_SECRET') || ''
+
+// Emergency contacts to call (Muthawif/Team-Support)
+const EMERGENCY_CONTACTS = [
+  '+6281234567890', // Muthawif 1 - placeholder
+  '+6289876543210', // Team Support - placeholder
+]
+
+/**
+ * Build TwiML voice response with synthesized speech
+ * Using Twilio's <Say> verb for Indonesian text-to-speech
+ */
+function buildTwiML(namaJamaah: string, coordinates: string): string {
+  const message = `Perhatian. Darurat. Jamaah atas nama ${namaJamaah} membutuhkan bantuan darurat. Lokasi: ${coordinates}. Segera hubungi nomor ini.`
+  
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Siti" language="id-ID" barge-in="true">
+    ${message}
+  </Say>
+  <Pause length="2"/>
+  <Say voice="Polly.Siti" language="id-ID">
+    Mengulang: ${message}
+  </Say>
+</Response>`
+}
+
+/**
+ * Make Twilio voice call using REST API via fetch
+ */
+async function makeVoiceCall(toPhone: string, twimlUrl: string): Promise<{ success: boolean; callSid?: string; error?: string }> {
+  const authHeader = 'Basic ' + btoa(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`)
+  
+  try {
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Calls.json`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          To: toPhone,
+          From: TWILIO_PHONE_NUMBER,
+          Twiml: twimlUrl,
+          timeout: '30',
+          statusCallback: `${Deno.env.get('SUPABASE_URL')}/functions/v1/twilio-voice-fallback/callback`,
+          statusCallbackEvent: 'initiated,ringing,answered,completed',
+          statusCallbackMethod: 'POST',
+        }).toString(),
+      }
+    )
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      console.error('Twilio API error:', data)
+      return { success: false, error: data.message || 'Twilio API error' }
+    }
+
+    return { success: true, callSid: data.sid }
+  } catch (error) {
+    console.error('Twilio call error:', error)
+    return { success: false, error: String(error) }
+  }
+}
+
+/**
+ * Create a TwiML URL with the emergency message
+ * In production, this would be a hosted TwiMLbin or your own TwiML endpoint
+ */
+async function createTwiMLBinUrl(namaJamaah: string, coordinates: string): Promise<string> {
+  // For Edge Functions, we'll use a data URI approach with base64 encoding
+  // This works for Twilio to fetch the TwiML
+  const twiml = buildTwiML(namaJamaah, coordinates)
+  const encoded = btoa(unescape(encodeURIComponent(twiml)))
+  
+  // Return a data URI that Twilio can fetch
+  // Note: In production, consider using TwiMLbin or a hosted endpoint
+  return `data:application/xml;base64,${encoded}`
+}
+
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  // Webhook secret validation
+  const providedSecret = req.headers.get('X-Webhook-Secret')
+  if (!WEBHOOK_SECRET || providedSecret !== WEBHOOK_SECRET) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  try {
+    // Validate Twilio credentials
+    if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
+      console.error('Missing Twilio credentials')
+      return new Response(JSON.stringify({ error: 'Twilio not configured' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    const payload: VoiceFallbackPayload = await req.json()
+
+    // Validate required fields
+    if (!payload.jamaaah_id || !payload.grup_id || payload.latitude === undefined || payload.longitude === undefined) {
+      return new Response(JSON.stringify({ error: 'Malformed payload' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // Initialize Supabase client
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    )
+
+    // Rate limit check: 1 call per 5 minutes per jamaah
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    const { data: recentVoiceAlerts } = await supabaseClient
+      .from('panic_alerts')
+      .select('id')
+      .eq('jamaaah_id', payload.jamaaah_id)
+      .gte('timestamp', fiveMinutesAgo)
+      .limit(1)
+
+    if (recentVoiceAlerts && recentVoiceAlerts.length > 0) {
+      return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
+        status: 429,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    // Get Jamaah name from profiles
+    let namaJamaah = payload.nama_jamaah || 'Unknown'
+    if (!payload.nama_jamaah) {
+      const { data: profile } = await supabaseClient
+        .from('profiles')
+        .select('name')
+        .eq('id', payload.jamaaah_id)
+        .single()
+      
+      if (profile?.name) {
+        namaJamaah = profile.name
+      }
+    }
+
+    // Format coordinates
+    const coordinates = `${payload.latitude}, ${payload.longitude}`
+
+    // Create TwiML URL with emergency message
+    const twimlUrl = await createTwiMLBinUrl(namaJamaah, coordinates)
+
+    // Get emergency contact numbers from grup
+    // First check if we have specific contacts for this grup
+    let contactList = EMERGENCY_CONTACTS
+    
+    const { data: grupContacts } = await supabaseClient
+      .from('grup_emergency_contacts')
+      .select('phone_number, contact_role')
+      .eq('grup_id', payload.grup_id)
+      .limit(5)
+
+    if (grupContacts && grupContacts.length > 0) {
+      contactList = grupContacts.map(c => c.phone_number)
+    }
+
+    // Make voice calls to all emergency contacts
+    const callResults = await Promise.allSettled(
+      contactList.map(async (phone) => {
+        return makeVoiceCall(phone, twimlUrl)
+      })
+    )
+
+    // Collect results
+    const successfulCalls = callResults
+      .filter((r): r is PromiseFulfilledResult<{ success: boolean; callSid?: string }> => 
+        r.status === 'fulfilled' && r.value.success
+      )
+      .map(r => r.value.callSid)
+
+    const failedCalls = callResults
+      .filter((r): r is PromiseFulfilledResult<{ success: boolean; error?: string }> => 
+        r.status === 'fulfilled' && !r.value.success
+      )
+      .map(r => r.value.error)
+
+    console.log(`Voice calls completed: ${successfulCalls.length} successful, ${failedCalls.length} failed`)
+
+    return new Response(JSON.stringify({
+      status: 'success',
+      alert_id: payload.alert_id || null,
+      jamaaah_id: payload.jamaaah_id,
+      calls_initiated: contactList.length,
+      successful_calls: successfulCalls.length,
+      call_sids: successfulCalls,
+      failed_calls: failedCalls.length,
+    }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+
+  } catch (error) {
+    console.error('Twilio voice fallback error:', error)
+    return new Response(JSON.stringify({ error: 'Internal error' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  }
+})

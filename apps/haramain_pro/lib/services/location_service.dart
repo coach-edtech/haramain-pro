@@ -1,0 +1,133 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+/// Location data model
+class LocationData {
+  final double latitude;
+  final double longitude;
+  final double? accuracy;
+  final double? altitude;
+  final DateTime timestamp;
+
+  const LocationData({
+    required this.latitude,
+    required this.longitude,
+    this.accuracy,
+    this.altitude,
+    required this.timestamp,
+  });
+
+  factory LocationData.fromPosition(Position position) {
+    return LocationData(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      accuracy: position.accuracy,
+      altitude: position.altitude,
+      timestamp: position.timestamp,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'latitude': latitude,
+      'longitude': longitude,
+      'accuracy': accuracy,
+      'altitude': altitude,
+      'timestamp': timestamp.toIso8601String(),
+    };
+  }
+
+  @override
+  String toString() {
+    return 'LocationData(lat: $latitude, lng: $longitude, accuracy: $accuracy, altitude: $altitude, timestamp: $timestamp)';
+  }
+}
+
+/// Location service for getting user coordinates
+class LocationService {
+  static final LocationService _instance = LocationService._internal();
+  static LocationService get instance => _instance;
+
+  LocationService._internal();
+
+  final StreamController<LocationData> _locationStreamController = StreamController<LocationData>.broadcast();
+  
+  Stream<LocationData> get onLocationChanged => _locationStreamController.stream;
+
+  /// Check and request location permissions
+  Future<bool> _checkPermission() async {
+    // Check if location services are enabled
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      debugPrint('Location services are disabled');
+      return false;
+    }
+
+    // Check permission status
+    var status = await Permission.location.status;
+    
+    if (status.isDenied) {
+      // Request permission
+      status = await Permission.location.request();
+    }
+    
+    if (status.isPermanentlyDenied) {
+      debugPrint('Location permission permanently denied');
+      // Open app settings
+      await openAppSettings();
+      return false;
+    }
+
+    return status.isGranted;
+  }
+
+  /// Get current location with permission handling
+  /// Returns LocationData with lat, lng, timestamp or null if failed
+  Future<LocationData?> getCurrentLocation() async {
+    try {
+      final hasPermission = await _checkPermission();
+      if (!hasPermission) {
+        debugPrint('Location permission not granted');
+        return null;
+      }
+
+      // Get current position with high accuracy
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 0,
+        ),
+      );
+
+      debugPrint('Got location: ${position.latitude}, ${position.longitude}');
+      return LocationData.fromPosition(position);
+    } catch (e) {
+      debugPrint('Error getting location: $e');
+      return null;
+    }
+  }
+
+  /// Calculate distance between two coordinates in meters
+  double calculateDistance(
+    double startLat,
+    double startLng,
+    double endLat,
+    double endLng,
+  ) {
+    return Geolocator.distanceBetween(startLat, startLng, endLat, endLng);
+  }
+
+  /// Check if a location is within a certain radius (in meters)
+  bool isWithinRadius(
+    double currentLat,
+    double currentLng,
+    double targetLat,
+    double targetLng,
+    double radiusInMeters,
+  ) {
+    final distance = calculateDistance(currentLat, currentLng, targetLat, targetLng);
+    return distance <= radiusInMeters;
+  }
+}

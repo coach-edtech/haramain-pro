@@ -1,0 +1,27 @@
+model_providers:
+  minimax:
+    api_key: ${MINIMAX_API_KEY}
+    base_url: https://api.minimax.io/v1
+    provider: openai
+
+models:
+  trae_agent_model:
+    model_provider: minimax
+    model: MiniMax-M2.7-Highspeed
+    max_tokens: 128000
+    temperature: 0.5
+    top_p: 1
+    top_k: 40
+    max_retries: 10
+    parallel_tool_calls: true
+
+agents:
+  trae_agent:
+    model: trae_agent_model
+    max_steps: 200
+    enable_lakeview: false
+    tools:
+      - bash
+      - str_replace_based_edit_tool
+      - sequentialthinking
+      - task_done
