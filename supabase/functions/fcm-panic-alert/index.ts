@@ -20,7 +20,7 @@ function validateUUID(id: string): boolean {
 
 interface PanicAlertPayload {
   JamaahId?: string
-  rombonganId: string
+ rombongan_id?: string
   latitude: number
   longitude: number
   accuracy?: number
@@ -188,7 +188,7 @@ serve(async (req) => {
       })
     }
 
-    if (payload.rombonganId && !validateUUID(payload.rombonganId)) {
+    if (payload.rombongan_id && !validateUUID(payload.rombongan_id)) {
       return new Response(JSON.stringify({ error: 'Invalid UUID' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -231,7 +231,7 @@ serve(async (req) => {
       .from('panic_alerts')
       .insert({
         jamaah_id: userId || null,
-        grup_id: payload.rombonganId || null,
+        grup_id: payload.rombongan_id || null,
         latitude: payload.latitude,
         longitude: payload.longitude,
         accuracy: payload.accuracy,
@@ -272,9 +272,9 @@ serve(async (req) => {
     const sendNotifications = async () => {
       const promises: Promise<void>[] = []
 
-      if (payload.rombonganId) {
+      if (payload.rombongan_id) {
         promises.push(
-          sendToTopic(`travel_${payload.rombonganId}`, {
+          sendToTopic(`travel_${payload.rombongan_id}`, {
             title: '🚨 Panic Alert!',
             body: `${JamaaahName} butuh bantuan di lokasi ini`,
             data: alertData,
@@ -319,7 +319,7 @@ serve(async (req) => {
         await supabaseClient.functions.invoke('twilio-voice-fallback', {
           body: {
             jamaah_id: userId,
-            grup_id: payload.rombonganId,
+            grup_id: payload.rombongan_id,
             latitude: payload.latitude,
             longitude: payload.longitude,
             alert_id: panicAlert?.id,
