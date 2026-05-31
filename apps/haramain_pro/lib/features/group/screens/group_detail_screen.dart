@@ -21,7 +21,7 @@ class GroupDetailScreen extends StatefulWidget {
 
 class _GroupDetailScreenState extends State<GroupDetailScreen> {
   late GroupModel _group;
-  List<MemberModel> _members = [];
+  late List<MemberModel> _members;
   bool _isLoading = true;
 
   bool get _isMuthawif => _group.muthawifId == widget.currentUserId;
@@ -188,12 +188,24 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
   }
 
   void _navigateToBroadcast() {
+    // Find current user's name from members list
+    final currentMember = _members.firstWhere(
+      (m) => m.userId == widget.currentUserId,
+      orElse: () => MemberModel(
+        userId: widget.currentUserId,
+        userName: 'Muthawif',
+        role: GroupRole.owner,
+        joinedAt: DateTime.now(),
+      ),
+    );
+
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => BroadcastScreen(
-          group: _group,
-          muthawifId: widget.currentUserId,
-          members: _members,
+          groupId: _group.id,
+          groupName: _group.name,
+          currentUserId: widget.currentUserId,
+          currentUserName: currentMember.userName,
         ),
       ),
     );

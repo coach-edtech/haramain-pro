@@ -3,7 +3,7 @@
 
 ||**Version:** 1.12-Dashboards
 |**Date:** May 15, 2026
-|**Status:** DRAFT — Updated per Coach Clarifications (v1.12)
+||**Status:** READY FOR ENGINEERING HANDOFF — All Open Questions Answered
 |**Author:** Trae SOLO Desktop (Execution Layer)
 |**CTO Review:** Hermes
 |**Document Owner:** Engineering Lead (Trae)
@@ -1915,20 +1915,20 @@ Travel Admin
 ||| ID | Question | Options | Priority | Status |
 |----|----------|---------|----------|---------|--------|
 || OQ-D-01 | Payment Gateway Provider? | Xendit (recommended) vs Midtrans vs Manual transfer | HIGH | ✅ Xendit confirmed |
-|| OQ-D-02 | Invoice Numbering Format? | `INV-YYYY-MM-XXX` vs `INV-TRAVELID-YYYYMM-XXX` | MEDIUM | Open |
-|| OQ-D-03 | Seat License Refund Policy? | No refund / Partial refund / Full refund within 30 days | HIGH | Open |
-|| OQ-D-04 | Fraud Detection Criteria? | Configurable thresholds vs fixed rules | MEDIUM | Open |
-|| OQ-D-05 | Force Update Mechanism? | Full block vs soft warning vs opt-out option | MEDIUM | Open |
+|| OQ-D-02 | Invoice Numbering Format? | `INV-YYYY-MM-XXX` vs `INV-TRAVELID-YYYYMM-XXX` | MEDIUM | ✅ B — `INV-TRAVELID-YYYYMM-XXX` |
+|| OQ-D-03 | Seat License Refund Policy? | No refund / Partial refund / Full refund within 30 days | HIGH | ✅ A — No refund |
+|| OQ-D-04 | Fraud Detection Criteria? | Configurable thresholds vs fixed rules | MEDIUM | ✅ B — Configurable thresholds |
+|| OQ-D-05 | Force Update Mechanism? | Full block vs soft warning vs opt-out option | MEDIUM | ✅ C — Opt-out with confirmation |
 
 ## 7.2 Business Decisions Needed
 
 ||| ID | Question | Options | Priority | Status |
 |----|----------|---------|----------|---------|--------|
 || OQ-B-01 | SuperAdmin Access | Internal team only vs include Coach Chaidir | HIGH | ✅ Coach Chaidir = SuperAdmin |
-|| OQ-B-02 | Seat License Price Override | Allow custom price per Travel? | HIGH | Open |
-|| OQ-B-03 | White Label Billing | Included in seat license price or separate invoice? | MEDIUM | Open |
-|| OQ-B-04 | Agent Commission Cap | Max commission per agent per month? | MEDIUM | Open |
-|| OQ-B-05 | Low Stock Alert Default | System-wide threshold or per-Travel config? | LOW | Open |
+|| OQ-B-02 | Seat License Price Override | Allow custom price per Travel? | HIGH | ✅ C — Travel Admin set within SuperAdmin-defined range |
+|| OQ-B-03 | White Label Billing | Included in seat license price or separate invoice? | MEDIUM | ✅ B — Separate invoice |
+|| OQ-B-04 | Agent Commission Cap | Max commission per agent per month? | MEDIUM | ✅ A — No cap |
+|| OQ-B-05 | Low Stock Alert Default | System-wide threshold or per-Travel config? | LOW | ✅ A — System-wide default |
 
 ## 7.3 Deferred to Future Versions
 

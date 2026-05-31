@@ -1,12 +1,20 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Profile } from '../types'
-import { Search, Mail, Phone, Shield } from 'lucide-react'
+import { Search, Mail, Phone, Shield, Calendar, CreditCard, ChevronDown, ChevronUp } from 'lucide-react'
+
+interface SubscriptionInfo {
+  plan: string
+  status: 'trial' | 'active' | 'expired'
+  expiry_date?: string
+  auto_renew?: boolean
+}
 
 export default function Jamaah() {
   const [jamaah, setJamaah] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchJamaah()
@@ -17,7 +25,7 @@ export default function Jamaah() {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
-        .eq('role', 'pilgrim')
+        .eq('role', 'jamaah')
         .order('created_at', { ascending: false })
 
       if (error) throw error
@@ -34,10 +42,59 @@ export default function Jamaah() {
     j.email.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  const tierColors = {
-    trial: 'bg-gray-100 text-gray-700',
-    active: 'bg-green-100 text-green-700',
-    expired: 'bg-red-100 text-red-700',
+  const getSubscriptionInfo = (profile: Profile): SubscriptionInfo => {
+    const tier = profile.subscription_tier || 'trial'
+    const planNames: Record<string, string> = {
+      trial: 'Umrah Mandiri Trial',
+      basic: 'Umrah Mandiri Basic',
+      premium: 'Umrah Mandiri Premium',
+      active: 'Umrah Mandiri Premium',
+      expired: 'Umrah Mandiri Expired',
+    }
+    return {
+      plan: planNames[tier] || 'Umrah Mandiri Trial',
+      status: tier as SubscriptionInfo['status'],
+      expiry_date: profile.subscription_expiry,
+      auto_renew: profile.auto_renew || false,
+    }
+  }
+
+  const tierStyles = {
+    trial: {
+      bg: 'bg-amber-50',
+      text: 'text-amber-700',
+      border: 'border-amber-200',
+      badge: 'bg-amber-100 text-amber-800',
+      icon: '🏖️',
+    },
+    basic: {
+      bg: 'bg-blue-50',
+      text: 'text-blue-700',
+      border: 'border-blue-200',
+      badge: 'bg-blue-100 text-blue-800',
+      icon: '🌙',
+    },
+    premium: {
+      bg: 'bg-emerald-50',
+      text: 'text-emerald-700',
+      border: 'border-emerald-200',
+      badge: 'bg-emerald-100 text-emerald-800',
+      icon: '🕌',
+    },
+    active: {
+      bg: 'bg-emerald-50',
+      text: 'text-emerald-700',
+      border: 'border-emerald-200',
+      badge: 'bg-emerald-100 text-emerald-800',
+      icon: '🕌',
+    },
+    expired: {
+      bg: 'bg-red-50',
+      text: 'text-red-700',
+      border: 'border-red-200',
+      badge: 'bg-red-100 text-red-800',
+      icon: '⏰',
+    },
   }
 
   return (
@@ -93,9 +150,38 @@ export default function Jamaah() {
                     </td>
                     <td className="px-4 py-3 text-gray-600">{person.email}</td>
                     <td className="px-4 py-3">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${tierColors[person.subscription_tier]}`}>
-                        {person.subscription_tier}
-                      </span>
+                      {(() => {
+                        const sub = getSubscriptionInfo(person)
+                        const style = tierStyles[sub.status] || tierStyles.trial
+                        return (
+                          <div className="space-y-2">
+                            {/* Tier Badge with Icon */}
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${style.badge}`}>
+                              <span>{style.icon}</span>
+                              <span className="capitalize">{sub.status}</span>
+                            </span>
+                            
+                            {/* Subscription Plan Name */}
+                            <div className="text-sm font-medium text-gray-900">{sub.plan}</div>
+                            
+                            {/* Expiry & Auto-renew info */}
+                            <div className="flex items-center gap-3 text-xs text-gray-500">
+                              {sub.expiry_date && (
+                                <span className="flex items-center gap-1">
+                                  <Calendar className="w-3 h-3" />
+                                  {new Date(sub.expiry_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                </span>
+                              )}
+                              {sub.auto_renew && (
+                                <span className="flex items-center gap-1 text-emerald-600">
+                                  <CreditCard className="w-3 h-3" />
+                                  Auto-renew
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })()}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">

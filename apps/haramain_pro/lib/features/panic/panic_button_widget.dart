@@ -120,7 +120,7 @@ class _PanicButtonWidgetState extends State<PanicButtonWidget>
     try {
       final result = await PanicService.instance.sendPanic(
         jamaaahId: widget.jamaaahId,
-        rombonganId: widget.grupId,
+        caravanaId: widget.grupId,
         coordinates: widget.initialLocation,
       );
 

@@ -24,9 +24,9 @@ export default function Dashboard() {
       const today = new Date().toISOString().split('T')[0]
       
       const [jamaahRes, romonganRes, panicRes] = await Promise.all([
-        supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'pilgrim'),
-        supabase.from('rombangans').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-        supabase.from('panic_alerts').select('id', { count: 'exact', head: true }).gte('timestamp', today),
+        supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'jamaah'),
+        supabase.from('rombongans').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+        supabase.from('panic_alerts').select('id', { count: 'exact', head: true }).gte('created_at', today),
       ])
 
       setStats({

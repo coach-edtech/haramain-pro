@@ -1,8 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { supabase } from './lib/supabase'
 import { UserRole } from './types'
-import { MOCK_USERS } from './lib/auth'
 import Layout from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
 import Login from './pages/Login'
@@ -13,6 +13,7 @@ import TravelsAdmin from './pages/admin/Travels'
 import BillingAdmin from './pages/admin/Billing'
 import UsersAdmin from './pages/admin/Users'
 import SystemHealth from './pages/admin/System'
+import JamaahPage from './pages/Jamaah'
 
 import TravelAdminDashboard from './pages/travel-admin/Dashboard'
 import SeatLicensesTravelAdmin from './pages/travel-admin/SeatLicenses'
@@ -25,8 +26,9 @@ import AgentsTravelAdmin from './pages/travel-admin/Agents'
 function AppContent() {
   const [session, setSession] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [userRole, setUserRole] = useState<UserRole>('super_admin')
-  const [userName, setUserName] = useState('Coach Chaidir')
+  // Default to null — no role until verified from server. Defaulting to super_admin was a security hole.
+  const [userRole, setUserRole] = useState<UserRole | null>(null)
+  const [userName, setUserName] = useState<string>('')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -41,14 +43,29 @@ function AppContent() {
     return () => subscription.unsubscribe()
   }, [])
 
+  // Fetch real role from Supabase profiles — the authoritative source.
+  // MOCK_USERS bypass removed: role must come from the database, never from hardcoded maps.
   useEffect(() => {
-    if (session?.user?.email) {
-      const mockUser = MOCK_USERS[session.user.email.toLowerCase()]
-      if (mockUser) {
-        setUserRole(mockUser.role)
-        setUserName(mockUser.name)
+    async function fetchRealRole() {
+      if (!session?.user?.id) return
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role, name')
+        .eq('id', session.user.id)
+        .single()
+
+      if (profile) {
+        setUserRole(profile.role as UserRole)
+        setUserName(profile.name || session.user.email || '')
+      } else {
+        // No profile row — default to jamaah_mandiri (lowest privilege), don't expose as super_admin
+        setUserRole('jamaah_mandiri')
+        setUserName(session.user.email || '')
       }
     }
+
+    fetchRealRole()
   }, [session])
 
   if (loading) {
@@ -63,10 +80,19 @@ function AppContent() {
     return <Login />
   }
 
+  // Still loading role from server — show spinner
+  if (userRole === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      </div>
+    )
+  }
+
   return (
-    <Layout 
-      userRole={userRole} 
-      userEmail={session.user.email} 
+    <Layout
+      userRole={userRole}
+      userEmail={session.user.email}
       userName={userName}
     >
       <Routes>
@@ -139,6 +165,12 @@ function AppContent() {
           </ProtectedRoute>
         } />
 
+        <Route path="/jamaah" element={
+          <ProtectedRoute allowedRoles={['jamaah', 'jamaah_mandiri']}>
+            <JamaahPage />
+          </ProtectedRoute>
+        } />
+
         <Route path="*" element={<Navigate to="/travel-admin" replace />} />
       </Routes>
     </Layout>
@@ -146,10 +178,20 @@ function AppContent() {
 }
 
 function App() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 1000 * 60 * 5, // 5 minutes
+        retry: 2,
+      },
+    },
+  })
   return (
-    <BrowserRouter>
-      <AppContent />
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AppContent />
+      </BrowserRouter>
+    </QueryClientProvider>
   )
 }
 

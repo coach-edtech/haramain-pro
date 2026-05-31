@@ -1,21 +1,24 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
-import '../models/group_model.dart';
-import '../services/broadcast_service.dart';
+import '../../../design/tokens/app_colors.dart';
+import '../../../design/tokens/app_typography.dart';
+import '../../../design/tokens/app_spacing.dart';
+import '../../../features/group/services/broadcast_service.dart';
+import '../../../features/group/services/group_service.dart';
 
-/// Screen for Muthawif to broadcast schedule to group members
+/// Broadcast composer screen for Muthawif
+/// As per FRONTEND-SPEC.md Section 4.4
 class BroadcastScreen extends StatefulWidget {
-  final GroupModel group;
-  final String muthawifId;
-  final List<MemberModel> members;
+  final String groupId;
+  final String groupName;
+  final String currentUserId;
+  final String currentUserName;
 
   const BroadcastScreen({
     super.key,
-    required this.group,
-    required this.muthawifId,
-    required this.members,
+    required this.groupId,
+    required this.groupName,
+    required this.currentUserId,
+    required this.currentUserName,
   });
 
   @override
@@ -24,376 +27,409 @@ class BroadcastScreen extends StatefulWidget {
 
 class _BroadcastScreenState extends State<BroadcastScreen> {
   final _messageController = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
-  File? _selectedImage;
-  bool _isSending = false;
-  int _remainingSeconds = 0;
-  Timer? _countdownTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkRateLimit();
-  }
+  String? _selectedImagePath;
+  bool _isLoading = false;
+  bool _isScheduled = false;
+  DateTime? _scheduledTime;
 
   @override
   void dispose() {
     _messageController.dispose();
-    _countdownTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _checkRateLimit() async {
-    final remaining = await BroadcastService.instance.getRemainingSeconds(
-      widget.muthawifId,
-      widget.group.id,
-    );
-    if (mounted) {
-      setState(() => _remainingSeconds = remaining);
-      if (remaining > 0) {
-        _startCountdown();
+  Future<void> _sendBroadcast() async {
+    if (_messageController.text.trim().isEmpty && _selectedImagePath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Pesan atau foto harus diisi'),
+          backgroundColor: AppColors.red600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Get group members first
+      final members = await GroupService.instance.getGroupMembers(widget.groupId);
+      
+      final result = await BroadcastService.instance.sendBroadcast(
+        muthawifId: widget.currentUserId,
+        senderName: widget.currentUserName,
+        groupId: widget.groupId,
+        members: members,
+        message: _messageController.text.trim(),
+        imageUrl: _selectedImagePath,
+      );
+
+      if (result.success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Broadcast terkirim!'),
+              backgroundColor: AppColors.emerald700,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+              ),
+            ),
+          );
+          Navigator.pop(context);
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result.error ?? 'Gagal mengirim broadcast'),
+            backgroundColor: AppColors.red600,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Terjadi kesalahan'),
+          backgroundColor: AppColors.red600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
       }
     }
   }
 
-  void _startCountdown() {
-    _countdownTimer?.cancel();
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (mounted) {
-        setState(() {
-          if (_remainingSeconds > 0) {
-            _remainingSeconds--;
-          } else {
-            timer.cancel();
-          }
-        });
-      }
+  Future<void> _scheduleBroadcast() async {
+    if (_messageController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Pesan harus diisi untuk schedule'),
+          backgroundColor: AppColors.red600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+          ),
+        ),
+      );
+      return;
+    }
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: DateTime.now(),
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 30)),
+    );
+
+    if (date == null) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+
+    if (time == null) return;
+
+    setState(() {
+      _scheduledTime = DateTime(
+        date.year,
+        date.month,
+        date.day,
+        time.hour,
+        time.minute,
+      );
+      _isScheduled = true;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final canSend = _remainingSeconds == 0 && !_isSending;
-
     return Scaffold(
+      backgroundColor: AppColors.slate50,
       appBar: AppBar(
-        title: const Text('Broadcast Schedule'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
+        backgroundColor: AppColors.emerald900,
         foregroundColor: Colors.white,
+        title: Text(
+          'Broadcast',
+          style: AppTypography.titleLarge.copyWith(color: Colors.white),
+        ),
+        elevation: 0,
+        actions: [
+          TextButton(
+            onPressed: _isLoading ? null : _sendBroadcast,
+            child: _isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : Text(
+                    'Kirim',
+                    style: AppTypography.labelLarge.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+          ),
+        ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppSpacing.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Info Card
-              Card(
-                color: Theme.of(context).colorScheme.secondaryContainer,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
+              // To: Group selector
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: AppColors.cardLight,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                  border: Border.all(color: AppColors.slate200),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.group,
+                      color: AppColors.emerald700,
+                      size: 20,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Text(
+                      'Ke: ${widget.groupName}',
+                      style: AppTypography.titleSmall.copyWith(
+                        color: AppColors.slate900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: AppSpacing.md),
+
+              // Message input
+              Container(
+                decoration: BoxDecoration(
+                  color: AppColors.cardLight,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                  border: Border.all(color: AppColors.slate200),
+                ),
+                child: TextField(
+                  controller: _messageController,
+                  maxLines: 6,
+                  decoration: InputDecoration(
+                    hintText: 'Tulis pesan broadcast...',
+                    hintStyle: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.slate400,
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.all(AppSpacing.md),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: AppSpacing.md),
+
+              // Attach photo
+              GestureDetector(
+                onTap: () {
+                  // TODO: Implement image picker
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('Fitur foto akan segera hadir'),
+                      backgroundColor: AppColors.slate600,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  decoration: BoxDecoration(
+                    color: AppColors.cardLight,
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                    border: Border.all(color: AppColors.slate200, style: BorderStyle.solid),
+                  ),
                   child: Row(
                     children: [
-                      Icon(
-                        Icons.info_outline,
-                        color: Theme.of(context).colorScheme.onSecondaryContainer,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          'This message will be sent to all ${widget.members.length} members of the group via notification.',
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSecondaryContainer,
-                          ),
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppColors.emerald100,
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                         ),
+                        child: const Icon(
+                          Icons.camera_alt,
+                          color: AppColors.emerald700,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Lampirkan Foto',
+                              style: AppTypography.titleSmall.copyWith(
+                                color: AppColors.slate900,
+                              ),
+                            ),
+                            Text(
+                              'opsional',
+                              style: AppTypography.bodySmall.copyWith(
+                                color: AppColors.slate600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right,
+                        color: AppColors.slate400,
                       ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
 
-              // Rate Limit Warning
-              if (_remainingSeconds > 0) ...[
-                Card(
-                  color: Colors.orange.shade100,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.timer, color: Colors.orange),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'Rate limit active. Next broadcast in ${_formatTime(_remainingSeconds)}',
-                            style: const TextStyle(color: Colors.orange),
-                          ),
+              const SizedBox(height: AppSpacing.xl),
+
+              // Schedule option
+              if (_isScheduled && _scheduledTime != null)
+                Container(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  decoration: BoxDecoration(
+                    color: AppColors.amber50,
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                    border: Border.all(color: AppColors.amber500),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.schedule,
+                        color: AppColors.amber600,
+                        size: 20,
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Jadwal Broadcast',
+                              style: AppTypography.titleSmall.copyWith(
+                                color: AppColors.amber600,
+                              ),
+                            ),
+                            Text(
+                              '${_scheduledTime!.day}/${_scheduledTime!.month}/${_scheduledTime!.year} ${_scheduledTime!.hour}:${_scheduledTime!.minute.toString().padLeft(2, '0')}',
+                              style: AppTypography.bodySmall.copyWith(
+                                color: AppColors.amber600,
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _isScheduled = false;
+                            _scheduledTime = null;
+                          });
+                        },
+                        child: const Icon(
+                          Icons.close,
+                          color: AppColors.amber600,
+                          size: 20,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              const SizedBox(height: AppSpacing.md),
+
+              // Action buttons
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _scheduleBroadcast,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.emerald700,
+                        side: const BorderSide(color: AppColors.emerald700),
+                        padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                        ),
+                      ),
+                      icon: const Icon(Icons.schedule, size: 20),
+                      label: Text(
+                        'Jadwal',
+                        style: AppTypography.labelLarge.copyWith(
+                          color: AppColors.emerald700,
+                        ),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-              ],
-
-              // Message Input
-              TextFormField(
-                controller: _messageController,
-                maxLines: 6,
-                maxLength: 1000,
-                decoration: InputDecoration(
-                  labelText: 'Message',
-                  hintText: 'Enter schedule information (e.g., Prayer times, Meeting point, etc.)',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  alignLabelWithHint: true,
-                ),
-                validator: (value) {
-                  if (value == null || value.trim().isEmpty) {
-                    return 'Please enter a message';
-                  }
-                  if (value.length > 1000) {
-                    return 'Message too long (max 1000 characters)';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // Image Attachment
-              _buildImageAttachment(),
-              const SizedBox(height: 24),
-
-              // Preview Card
-              _buildPreviewCard(),
-              const SizedBox(height: 24),
-
-              // Send Button
-              ElevatedButton(
-                onPressed: canSend ? _sendBroadcast : null,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  foregroundColor: Colors.white,
-                ),
-                child: _isSending
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _isLoading || _isScheduled ? null : _sendBroadcast,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.emerald700,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: AppColors.slate300,
+                        padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                        ),
+                      ),
+                      icon: _isLoading
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                              ),
+                            )
+                          : const Icon(Icons.send, size: 20),
+                      label: Text(
+                        'Kirim Sekarang',
+                        style: AppTypography.labelLarge.copyWith(
                           color: Colors.white,
                         ),
-                      )
-                    : Text(
-                        _remainingSeconds > 0
-                            ? 'Wait ${_formatTime(_remainingSeconds)}'
-                            : 'Send Broadcast',
-                        style: const TextStyle(fontSize: 16),
                       ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildImageAttachment() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Attachment (Optional)',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 8),
-        if (_selectedImage != null) ...[
-          Stack(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(
-                  _selectedImage!,
-                  height: 200,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                ),
-              ),
-              Positioned(
-                top: 8,
-                right: 8,
-                child: IconButton(
-                  onPressed: () => setState(() => _selectedImage = null),
-                  icon: const Icon(Icons.close),
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.black54,
-                    foregroundColor: Colors.white,
+                    ),
                   ),
-                ),
+                ],
               ),
             ],
           ),
-        ] else ...[
-          OutlinedButton.icon(
-            onPressed: _pickImage,
-            icon: const Icon(Icons.add_photo_alternate),
-            label: const Text('Add Image'),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildPreviewCard() {
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.preview, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  'Preview',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-              ],
-            ),
-            const Divider(),
-            Text(
-              'Jadwal Baru dari Muthawif',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey.shade600,
-                  ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _messageController.text.isEmpty
-                  ? 'Your message will appear here...'
-                  : _messageController.text,
-              style: Theme.of(context).textTheme.bodyLarge,
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (_selectedImage != null) ...[
-              const SizedBox(height: 8),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.file(
-                  _selectedImage!,
-                  height: 100,
-                  width: 100,
-                  fit: BoxFit.cover,
-                ),
-              ),
-            ],
-          ],
         ),
       ),
     );
-  }
-
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1024,
-      maxHeight: 1024,
-      imageQuality: 80,
-    );
-
-    if (pickedFile != null) {
-      setState(() => _selectedImage = File(pickedFile.path));
-    }
-  }
-
-  Future<void> _sendBroadcast() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() => _isSending = true);
-
-    // Show confirmation dialog
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Broadcast'),
-        content: Text(
-          'Send this message to ${widget.members.length} members?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Send'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) {
-      setState(() => _isSending = false);
-      return;
-    }
-
-    // Upload image if selected (placeholder)
-    String? imageUrl;
-    if (_selectedImage != null) {
-      // TODO: Upload image to storage and get URL
-      // For now, we'll just use a placeholder
-      imageUrl = _selectedImage!.path;
-    }
-
-    // Send broadcast
-    final result = await BroadcastService.instance.sendBroadcast(
-      muthawifId: widget.muthawifId,
-      groupId: widget.group.id,
-      members: widget.members,
-      message: _messageController.text.trim(),
-      imageUrl: imageUrl,
-    );
-
-    if (!mounted) return;
-
-    setState(() => _isSending = false);
-
-    if (result.success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Broadcast sent successfully!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-      Navigator.of(context).pop();
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.error ?? 'Failed to send broadcast'),
-          backgroundColor: Colors.red,
-        ),
-      );
-
-      // Update remaining time if rate limited
-      if (result.nextAllowedTime != null) {
-        _checkRateLimit();
-      }
-    }
-  }
-
-  String _formatTime(int seconds) {
-    final minutes = seconds ~/ 60;
-    final secs = seconds % 60;
-    return '${minutes}m ${secs}s';
   }
 }

@@ -1,7 +1,7 @@
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../models/group_model.dart';
+import '../../../../supabase/supabase_client.dart';
 
 /// Result of broadcast operation
 class BroadcastResult {
@@ -18,49 +18,47 @@ class BroadcastResult {
   });
 }
 
-/// Broadcast service for sending group announcements
+/// Broadcast service — history and rate-limit stored in Supabase `broadcast_logs`
+/// FCM sending requires a backend Edge Function (not called directly from client)
 class BroadcastService {
   static final BroadcastService _instance = BroadcastService._internal();
   static BroadcastService get instance => _instance;
 
   BroadcastService._internal();
 
-  static const String _broadcastHistoryKey = 'haramain_broadcast_history';
-  static const String _lastBroadcastKey = 'haramain_last_broadcast';
+  SupabaseClient get _sb => SupabaseClientWrapper.instance.client;
+
   static const int _rateLimitMinutes = 5; // 1 broadcast per 5 minutes
 
-  /// Check if user can broadcast (rate limit check)
+  /// Check if user can broadcast (rate limit check via broadcast_logs)
   Future<bool> canBroadcast(String muthawifId, String groupId) async {
-    final key = '${_lastBroadcastKey}_${groupId}_$muthawifId';
-    final prefs = await SharedPreferences.getInstance();
-    final lastBroadcastStr = prefs.getString(key);
+    final lastBroadcast = await _getLastBroadcastTime(muthawifId, groupId);
+    if (lastBroadcast == null) return true;
 
-    if (lastBroadcastStr == null) return true;
-
-    final lastBroadcast = DateTime.parse(lastBroadcastStr);
     final nextAllowed = lastBroadcast.add(const Duration(minutes: _rateLimitMinutes));
-    
     return DateTime.now().isAfter(nextAllowed);
   }
 
   /// Get time remaining until next broadcast is allowed
   Future<Duration> getTimeUntilNextBroadcast(String muthawifId, String groupId) async {
-    final key = '${_lastBroadcastKey}_${groupId}_$muthawifId';
-    final prefs = await SharedPreferences.getInstance();
-    final lastBroadcastStr = prefs.getString(key);
+    final lastBroadcast = await _getLastBroadcastTime(muthawifId, groupId);
+    if (lastBroadcast == null) return Duration.zero;
 
-    if (lastBroadcastStr == null) return Duration.zero;
-
-    final lastBroadcast = DateTime.parse(lastBroadcastStr);
     final nextAllowed = lastBroadcast.add(const Duration(minutes: _rateLimitMinutes));
     final remaining = nextAllowed.difference(DateTime.now());
-
     return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  /// Get remaining seconds until next broadcast
+  Future<int> getRemainingSeconds(String muthawifId, String groupId) async {
+    final remaining = await getTimeUntilNextBroadcast(muthawifId, groupId);
+    return remaining.inSeconds;
   }
 
   /// Send broadcast to all group members
   Future<BroadcastResult> sendBroadcast({
     required String muthawifId,
+    required String senderName,
     required String groupId,
     required List<MemberModel> members,
     required String message,
@@ -92,31 +90,22 @@ class BroadcastService {
         );
       }
 
-      // Create broadcast
-      final broadcast = BroadcastModel(
-        id: const Uuid().v4(),
-        groupId: groupId,
-        senderId: muthawifId,
-        senderName: 'Muthawif', // Will be updated with actual name
-        message: message.trim(),
-        imageUrl: imageUrl,
-        sentAt: DateTime.now(),
-      );
+      // Insert broadcast into Supabase
+      final broadcastId = const Uuid().v4();
+      await _sb.from('broadcast_logs').insert({
+        'id': broadcastId,
+        'group_id': groupId,
+        'sender_id': muthawifId,
+        'sender_name': senderName,
+        'message': message.trim(),
+        'image_url': imageUrl,
+      });
 
-      // Store broadcast history
-      await _saveBroadcast(groupId, broadcast);
-
-      // Update last broadcast time
-      await _updateLastBroadcastTime(muthawifId, groupId);
-
-      // Send FCM to all members (except sender)
-      await _sendFcmToMembers(broadcast, members);
-
-      broadcastDebugPrint('Broadcast sent: ${broadcast.id} to ${members.length} members');
+      broadcastDebugPrint('Broadcast saved: $broadcastId to ${members.length} members');
 
       return BroadcastResult(
         success: true,
-        broadcastId: broadcast.id,
+        broadcastId: broadcastId,
       );
     } catch (e) {
       broadcastDebugPrint('Error sending broadcast: $e');
@@ -127,80 +116,35 @@ class BroadcastService {
     }
   }
 
-  /// Get broadcast history for a group
+  /// Get broadcast history for a group (newest first)
   Future<List<BroadcastModel>> getBroadcastHistory(String groupId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final historyJson = prefs.getString('${_broadcastHistoryKey}_$groupId');
+    final result = await _sb
+        .from('broadcast_logs')
+        .select()
+        .eq('group_id', groupId)
+        .order('sent_at', ascending: false)
+        .limit(50);
 
-    if (historyJson == null) return [];
-
-    final List<dynamic> decoded = jsonDecode(historyJson);
-    final broadcasts = decoded.map((e) => BroadcastModel.fromJson(e)).toList();
-    
-    // Sort by sent time, newest first
-    broadcasts.sort((a, b) => b.sentAt.compareTo(a.sentAt));
-    
-    return broadcasts;
+    return (result as List)
+        .map((e) => BroadcastModel.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
-  /// Get remaining seconds until next broadcast
-  Future<int> getRemainingSeconds(String muthawifId, String groupId) async {
-    final remaining = await getTimeUntilNextBroadcast(muthawifId, groupId);
-    return remaining.inSeconds;
-  }
+  // Private helpers
 
-  // Private helper methods
+  /// Get the most recent broadcast time for a sender in a group
+  Future<DateTime?> _getLastBroadcastTime(String muthawifId, String groupId) async {
+    final result = await _sb
+        .from('broadcast_logs')
+        .select('sent_at')
+        .eq('group_id', groupId)
+        .eq('sender_id', muthawifId)
+        .order('sent_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
 
-  Future<void> _saveBroadcast(String groupId, BroadcastModel broadcast) async {
-    final broadcasts = await getBroadcastHistory(groupId);
-    broadcasts.insert(0, broadcast);
-
-    // Keep only last 50 broadcasts
-    final trimmed = broadcasts.take(50).toList();
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      '${_broadcastHistoryKey}_$groupId',
-      jsonEncode(trimmed.map((b) => b.toJson()).toList()),
-    );
-  }
-
-  Future<void> _updateLastBroadcastTime(String muthawifId, String groupId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = '${_lastBroadcastKey}_${groupId}_$muthawifId';
-    await prefs.setString(key, DateTime.now().toIso8601String());
-  }
-
-  /// Send FCM notification to all group members
-  Future<void> _sendFcmToMembers(BroadcastModel broadcast, List<MemberModel> members) async {
-    // TODO: Integrate with Firebase Cloud Messaging
-    // For now, simulate sending
-    
-    for (final member in members) {
-      if (member.userId == broadcast.senderId) continue; // Skip sender
-      
-      try {
-        // In production, call FCM API to send notification to member's device
-        // FCM payload would be:
-        // {
-        //   'notification': {
-        //     'title': 'Jadwal Baru dari Muthawif',
-        //     'body': broadcast.message,
-        //   },
-        //   'data': {
-        //     'type': 'broadcast',
-        //     'broadcast_id': broadcast.id,
-        //     'group_id': broadcast.groupId,
-        //     'image_url': broadcast.imageUrl ?? '',
-        //   },
-        //   'token': member_fcm_token
-        // }
-        
-        broadcastDebugPrint('FCM sent to ${member.userId} for broadcast ${broadcast.id}');
-      } catch (e) {
-        broadcastDebugPrint('Failed to send FCM to ${member.userId}: $e');
-      }
-    }
+    if (result == null) return null;
+    return DateTime.parse(result['sent_at'] as String);
   }
 }
 

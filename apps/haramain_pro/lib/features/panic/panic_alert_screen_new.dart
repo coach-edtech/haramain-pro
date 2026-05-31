@@ -89,7 +89,7 @@ class _PanicAlertScreenPremiumState extends State<PanicAlertScreenPremium>
     try {
       await PanicService.instance.sendPanic(
         jamaaahId: widget.jamaaahId,
-        rombonganId: widget.grupId,
+        caravanaId: widget.grupId,
       );
 
       if (mounted) {

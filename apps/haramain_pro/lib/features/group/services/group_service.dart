@@ -1,7 +1,7 @@
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../models/group_model.dart';
+import '../../../../supabase/supabase_client.dart';
 
 /// Service result wrapper
 class ServiceResult<T> {
@@ -20,15 +20,15 @@ class ServiceResult<T> {
       ServiceResult(success: false, error: error);
 }
 
-/// Group service for managing Jamaah groups
+/// Group service — all group data stored in Supabase
+/// Tables: groups, group_members, broadcast_logs
 class GroupService {
   static final GroupService _instance = GroupService._internal();
   static GroupService get instance => _instance;
 
   GroupService._internal();
 
-  static const String _groupsKey = 'haramain_groups';
-  static const String _membersKey = 'haramain_group_members';
+  SupabaseClient get _sb => SupabaseClientWrapper.instance.client;
 
   /// Generate a 6-character alphanumeric PIN
   String generatePin() {
@@ -60,7 +60,24 @@ class GroupService {
       final groupId = const Uuid().v4();
       final qrData = generateQRCode(groupId, pin);
 
-      // Create group model
+      // Insert group into Supabase
+      await _sb.from('groups').insert({
+        'id': groupId,
+        'name': name,
+        'pin': pin,
+        'qr_data': qrData,
+        'muthawif_id': muthawifId,
+        'max_members': 100,
+      });
+
+      // Insert owner as first member
+      await _sb.from('group_members').insert({
+        'group_id': groupId,
+        'user_id': muthawifId,
+        'user_name': muthawifName,
+        'role': 'owner',
+      });
+
       final group = GroupModel(
         id: groupId,
         name: name,
@@ -72,21 +89,7 @@ class GroupService {
         memberCount: 1,
       );
 
-      // Create initial member (Muthawif)
-      final member = MemberModel(
-        userId: muthawifId,
-        userName: muthawifName,
-        role: GroupRole.owner,
-        joinedAt: DateTime.now(),
-      );
-
-      // Store group
-      await _saveGroup(group);
-
-      // Store member
-      await _saveMember(groupId, member);
-
-      groupDebugPrint('Group created: ${group.id} with PIN: ${group.pin}');
+      groupDebugPrint('Group created: $groupId with PIN: $pin');
       return ServiceResult.ok(group);
     } catch (e) {
       groupDebugPrint('Error creating group: $e');
@@ -101,38 +104,66 @@ class GroupService {
     required String pin,
   }) async {
     try {
-      // Find group by PIN
-      final group = await _findGroupByPin(pin);
-      if (group == null) {
+      // Find group by PIN — query by exact pin
+      final pinUpper = pin.toUpperCase();
+      final groupResult = await _sb
+          .from('groups')
+          .select()
+          .eq('pin', pinUpper)
+          .maybeSingle();
+
+      if (groupResult == null) {
         return ServiceResult.fail('Invalid PIN. Please check and try again.');
       }
 
-      if (group.isFull) {
-        return ServiceResult.fail('Group is full. Maximum 100 members reached.');
+      final groupData = Map<String, dynamic>.from(groupResult);
+      final groupId = groupData['id'] as String;
+
+      // Check member count
+      final membersResult = await _sb
+          .from('group_members')
+          .select('id')
+          .eq('group_id', groupId);
+      final memberCount = (membersResult as List).length;
+      final maxMembers = groupData['max_members'] as int? ?? 100;
+
+      if (memberCount >= maxMembers) {
+        return ServiceResult.fail('Group is full. Maximum $maxMembers members reached.');
       }
 
       // Check if already a member
-      final members = await getGroupMembers(group.id);
-      if (members.any((m) => m.userId == jamaahId)) {
+      final existingMember = await _sb
+          .from('group_members')
+          .select()
+          .eq('group_id', groupId)
+          .eq('user_id', jamaahId)
+          .maybeSingle();
+
+      if (existingMember != null) {
         return ServiceResult.fail('You are already a member of this group.');
       }
 
       // Add member
-      final member = MemberModel(
-        userId: jamaahId,
-        userName: jamaahName,
-        role: GroupRole.member,
-        joinedAt: DateTime.now(),
+      await _sb.from('group_members').insert({
+        'group_id': groupId,
+        'user_id': jamaahId,
+        'user_name': jamaahName,
+        'role': 'member',
+      });
+
+      final group = GroupModel(
+        id: groupId,
+        name: groupData['name'] as String,
+        pin: groupData['pin'] as String,
+        qrData: groupData['qr_data'] as String? ?? '',
+        muthawifId: groupData['muthawif_id'] as String,
+        maxMembers: maxMembers,
+        createdAt: DateTime.parse(groupData['created_at'] as String),
+        memberCount: memberCount + 1,
       );
 
-      await _saveMember(group.id, member);
-
-      // Update member count
-      final updatedGroup = group.copyWith(memberCount: group.memberCount + 1);
-      await _saveGroup(updatedGroup);
-
-      groupDebugPrint('Jamaah $jamaahId joined group ${group.id}');
-      return ServiceResult.ok(updatedGroup);
+      groupDebugPrint('Jamaah $jamaahId joined group $groupId');
+      return ServiceResult.ok(group);
     } catch (e) {
       groupDebugPrint('Error joining group: $e');
       return ServiceResult.fail('Failed to join group: $e');
@@ -160,12 +191,18 @@ class GroupService {
       }
 
       // Verify group exists and PIN matches
-      final group = await _getGroup(groupId);
-      if (group == null) {
+      final groupResult = await _sb
+          .from('groups')
+          .select()
+          .eq('id', groupId)
+          .maybeSingle();
+
+      if (groupResult == null) {
         return ServiceResult.fail('Group not found.');
       }
 
-      if (group.pin != pin) {
+      final groupData = Map<String, dynamic>.from(groupResult);
+      if (groupData['pin'] != pin) {
         return ServiceResult.fail('Invalid PIN in QR code.');
       }
 
@@ -198,11 +235,11 @@ class GroupService {
       }
 
       // Remove member
-      await _removeMember(groupId, jamaahId);
-
-      // Update member count
-      final updatedGroup = group.copyWith(memberCount: group.memberCount - 1);
-      await _saveGroup(updatedGroup);
+      await _sb
+          .from('group_members')
+          .delete()
+          .eq('group_id', groupId)
+          .eq('user_id', jamaahId);
 
       groupDebugPrint('Jamaah $jamaahId left group $groupId');
       return ServiceResult.ok(null);
@@ -233,11 +270,11 @@ class GroupService {
       }
 
       // Remove member
-      await _removeMember(groupId, memberId);
-
-      // Update member count
-      final updatedGroup = group.copyWith(memberCount: group.memberCount - 1);
-      await _saveGroup(updatedGroup);
+      await _sb
+          .from('group_members')
+          .delete()
+          .eq('group_id', groupId)
+          .eq('user_id', memberId);
 
       groupDebugPrint('Member $memberId removed from group $groupId by Muthawif $muthawifId');
       return ServiceResult.ok(null);
@@ -249,13 +286,14 @@ class GroupService {
 
   /// Get all members of a group
   Future<List<MemberModel>> getGroupMembers(String groupId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final membersJson = prefs.getString('${_membersKey}_$groupId');
+    final result = await _sb
+        .from('group_members')
+        .select()
+        .eq('group_id', groupId);
 
-    if (membersJson == null) return [];
-
-    final List<dynamic> decoded = jsonDecode(membersJson);
-    return decoded.map((e) => MemberModel.fromJson(e)).toList();
+    return (result as List)
+        .map((e) => MemberModel.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
   /// Get a group by ID
@@ -263,26 +301,49 @@ class GroupService {
     return _getGroup(groupId);
   }
 
-  /// Get all groups for a user (where they are a member)
+  /// Get all groups for a user (where they are a member or owner)
   Future<List<GroupModel>> getUserGroups(String userId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final groupsJson = prefs.getString(_groupsKey);
+    // Get groups where user is owner
+    final ownedResult = await _sb
+        .from('groups')
+        .select()
+        .eq('muthawif_id', userId);
 
-    if (groupsJson == null) return [];
+    // Get groups where user is a member
+    final membershipResult = await _sb
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', userId);
 
-    final List<dynamic> decoded = jsonDecode(groupsJson);
-    final groups = decoded.map((e) => GroupModel.fromJson(e)).toList();
+    final memberGroupIds = (membershipResult as List)
+        .map((e) => e['group_id'] as String)
+        .toSet();
 
-    // Filter groups where user is a member
-    final userGroups = <GroupModel>[];
-    for (final group in groups) {
-      final members = await getGroupMembers(group.id);
-      if (members.any((m) => m.userId == userId)) {
-        userGroups.add(group);
-      }
+    // Get member groups
+    List<GroupModel> memberGroups = [];
+    if (memberGroupIds.isNotEmpty) {
+      // Use `in` filter — Supabase Flutter uses `in()` method
+      final memberGroupsResult = await _sb
+          .from('groups')
+          .select()
+          .inFilter('id', memberGroupIds.toList());
+
+      memberGroups = (memberGroupsResult as List)
+          .map((e) => _groupFromMap(Map<String, dynamic>.from(e)))
+          .toList();
     }
 
-    return userGroups;
+    // Combine with owned groups, avoiding duplicates
+    final ownedGroups = (ownedResult as List)
+        .map((e) => _groupFromMap(Map<String, dynamic>.from(e)))
+        .toList();
+
+    final allGroupsMap = <String, GroupModel>{};
+    for (final g in [...ownedGroups, ...memberGroups]) {
+      allGroupsMap[g.id] = g;
+    }
+
+    return allGroupsMap.values.toList();
   }
 
   /// Delete a group (Muthawif only)
@@ -300,11 +361,8 @@ class GroupService {
         return ServiceResult.fail('Only Muthawif can delete the group.');
       }
 
-      // Remove all members
-      await _removeAllMembers(groupId);
-
-      // Remove group
-      await _deleteGroup(groupId);
+      // CASCADE will delete group_members and broadcast_logs
+      await _sb.from('groups').delete().eq('id', groupId);
 
       groupDebugPrint('Group $groupId deleted by Muthawif $muthawifId');
       return ServiceResult.ok(null);
@@ -314,112 +372,32 @@ class GroupService {
     }
   }
 
-  // Private helper methods
+  // Private helpers
 
   Future<GroupModel?> _getGroup(String groupId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final groupsJson = prefs.getString(_groupsKey);
+    final result = await _sb
+        .from('groups')
+        .select()
+        .eq('id', groupId)
+        .maybeSingle();
 
-    if (groupsJson == null) return null;
-
-    final List<dynamic> decoded = jsonDecode(groupsJson);
-    final groups = decoded.map((e) => GroupModel.fromJson(e)).toList();
-
-    try {
-      return groups.firstWhere((g) => g.id == groupId);
-    } catch (_) {
-      return null;
-    }
+    if (result == null) return null;
+    return _groupFromMap(Map<String, dynamic>.from(result));
   }
 
-  Future<GroupModel?> _findGroupByPin(String pin) async {
-    final prefs = await SharedPreferences.getInstance();
-    final groupsJson = prefs.getString(_groupsKey);
-
-    if (groupsJson == null) return null;
-
-    final List<dynamic> decoded = jsonDecode(groupsJson);
-    final groups = decoded.map((e) => GroupModel.fromJson(e)).toList();
-
-    try {
-      return groups.firstWhere((g) => g.pin == pin);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> _saveGroup(GroupModel group) async {
-    final prefs = await SharedPreferences.getInstance();
-    final groupsJson = prefs.getString(_groupsKey);
-
-    List<GroupModel> groups = [];
-    if (groupsJson != null) {
-      final List<dynamic> decoded = jsonDecode(groupsJson);
-      groups = decoded.map((e) => GroupModel.fromJson(e)).toList();
-    }
-
-    // Update or add
-    final index = groups.indexWhere((g) => g.id == group.id);
-    if (index >= 0) {
-      groups[index] = group;
-    } else {
-      groups.add(group);
-    }
-
-    await prefs.setString(
-      _groupsKey,
-      jsonEncode(groups.map((g) => g.toJson()).toList()),
+  GroupModel _groupFromMap(Map<String, dynamic> map) {
+    return GroupModel(
+      id: map['id'] as String,
+      name: map['name'] as String,
+      pin: map['pin'] as String,
+      qrData: map['qr_data'] as String? ?? '',
+      muthawifId: map['muthawif_id'] as String,
+      maxMembers: map['max_members'] as int? ?? 100,
+      createdAt: map['created_at'] != null
+          ? DateTime.parse(map['created_at'] as String)
+          : DateTime.now(),
+      memberCount: map['member_count'] as int? ?? 1,
     );
-  }
-
-  Future<void> _deleteGroup(String groupId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final groupsJson = prefs.getString(_groupsKey);
-
-    if (groupsJson == null) return;
-
-    final List<dynamic> decoded = jsonDecode(groupsJson);
-    final groups = decoded.map((e) => GroupModel.fromJson(e)).toList();
-    groups.removeWhere((g) => g.id == groupId);
-
-    await prefs.setString(
-      _groupsKey,
-      jsonEncode(groups.map((g) => g.toJson()).toList()),
-    );
-  }
-
-  Future<void> _saveMember(String groupId, MemberModel member) async {
-    final members = await getGroupMembers(groupId);
-
-    // Update or add
-    final index = members.indexWhere((m) => m.userId == member.userId);
-    if (index >= 0) {
-      members[index] = member;
-    } else {
-      members.add(member);
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      '${_membersKey}_$groupId',
-      jsonEncode(members.map((m) => m.toJson()).toList()),
-    );
-  }
-
-  Future<void> _removeMember(String groupId, String userId) async {
-    final members = await getGroupMembers(groupId);
-    members.removeWhere((m) => m.userId == userId);
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      '${_membersKey}_$groupId',
-      jsonEncode(members.map((m) => m.toJson()).toList()),
-    );
-  }
-
-  Future<void> _removeAllMembers(String groupId) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('${_membersKey}_$groupId');
   }
 }
 

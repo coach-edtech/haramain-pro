@@ -1,12 +1,61 @@
-import { Bell, Plus, Send, Smartphone, CheckCircle, AlertCircle } from 'lucide-react'
-import { mockOTAVersions } from '../../lib/mockData'
-import { useState } from 'react'
+import { Bell, Plus, Send, Smartphone, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { supabase } from '../../lib/supabase'
+import type { OTAVersion } from '../../types'
 
 export default function OTATravelAdmin() {
   const [showNewVersionModal, setShowNewVersionModal] = useState(false)
+  const [otaVersions, setOTAVersions] = useState<OTAVersion[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const publishedVersions = mockOTAVersions.filter(v => v.status === 'published')
-  const draftVersions = mockOTAVersions.filter(v => v.status === 'draft')
+  useEffect(() => {
+    fetchOTAVersions()
+  }, [])
+
+  const fetchOTAVersions = async () => {
+    try {
+      setError(null)
+      const { data, error: supabaseError } = await supabase
+        .from('ota_versions')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (supabaseError) throw supabaseError
+      setOTAVersions(data || [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch OTA versions')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const publishedVersions = otaVersions.filter(v => v.status === 'published')
+  const draftVersions = otaVersions.filter(v => v.status === 'draft')
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-red-600 font-medium">{error}</p>
+          <button
+            onClick={fetchOTAVersions}
+            className="mt-2 text-emerald-600 hover:text-emerald-700 text-sm font-medium"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -50,8 +99,8 @@ export default function OTATravelAdmin() {
         <div className="card p-6">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-sm text-gray-500 mb-1">Active Users</p>
-              <p className="text-2xl font-bold text-gray-900">285</p>
+              <p className="text-sm text-gray-500 mb-1">Total Versions</p>
+              <p className="text-2xl font-bold text-gray-900">{otaVersions.length}</p>
             </div>
             <div className="p-3 bg-blue-50 rounded-lg">
               <Smartphone className="w-6 h-6 text-blue-600" />
@@ -131,7 +180,7 @@ export default function OTATravelAdmin() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {mockOTAVersions.map((version) => (
+              {otaVersions.map((version) => (
                 <tr key={version.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 font-medium text-gray-900">{version.version}</td>
                   <td className="px-6 py-4">

@@ -21,6 +21,11 @@ import 'features/ibadah/widgets/geofence_alert_dialog.dart';
 import 'features/history/screens/history_screen_new.dart';
 import 'features/virtual_muthawif/screens/chat_screen_new.dart';
 import 'features/profile/screens/profile_screen_new.dart';
+import 'features/onboarding/onboarding_screen.dart';
+import 'features/group/screens/join_group_screen.dart';
+import 'features/group/screens/broadcast_screen.dart';
+import 'features/album/album_gallery_screen.dart';
+import 'features/camera/camera_screen.dart';
 import 'models/user_model.dart';
 import 'services/location_service.dart';
 import 'supabase/supabase_client.dart' as app;
@@ -162,6 +167,26 @@ class _HaramainProAppState extends State<HaramainProApp> {
         '/chat-premium': (context) => const VirtualMuthawifScreenPremium(),
         '/profile-premium': (context) => const ProfileScreenPremium(),
         '/panic-alert-premium': (context) => const PanicAlertPremiumRoute(),
+        '/onboarding': (context) => OnboardingScreen(onComplete: () {}),
+        '/join-group': (context) => const JoinGroupScreen(
+          userId: '',
+          userName: '',
+        ),
+        '/broadcast': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+          final user = app.SupabaseClientWrapper.instance.currentUser;
+          return BroadcastScreen(
+            groupId: args?['groupId'] ?? '',
+            groupName: args?['groupName'] ?? 'Group',
+            currentUserId: user?.id ?? '',
+            currentUserName: user?.email ?? 'User',
+          );
+        },
+        '/album': (context) => const AlbumGalleryScreen(),
+        '/camera': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+          return CameraScreen(groupId: args?['groupId']);
+        },
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/home') {
@@ -832,7 +857,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final alert = PanicAlert(
         id: data['alert_id'] ?? '',
         jamaaahId: data['jamaah_id'] ?? '',
-        rombonganId: data['grup_id'] ?? '',
+        grupId: data['grup_id'] ?? '',
         latitude: double.tryParse(data['lat']?.toString() ?? '0') ?? 0,
         longitude: double.tryParse(data['lng']?.toString() ?? '0') ?? 0,
         timestamp: DateTime.tryParse(data['timestamp'] ?? '') ?? DateTime.now(),

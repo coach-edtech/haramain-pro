@@ -9,7 +9,7 @@ max_rows = 1000
 
 [db]
 port = 54322
-major_version = 15
+major_version = 17
 
 [studio]
 enabled = true
@@ -23,7 +23,7 @@ pop3_port = 54326
 
 [functions]
 [functions.deno_runtime]
-version = "1.35.2"
+# version = "1.35.2"
 
 [auth]
 enabled = true

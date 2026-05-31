@@ -1,22 +1,77 @@
-import { UserPlus, Search, Copy, TrendingUp, Users } from 'lucide-react'
-import { mockSalesAgents } from '../../lib/mockData'
-import { useState } from 'react'
+import { UserPlus, Search, Copy, TrendingUp, Users, Loader2 } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { supabase } from '../../lib/supabase'
+import { useAgencyProfile } from '../../hooks/useAgencyProfile'
+import type { SalesAgent } from '../../types'
 
 export default function AgentsTravelAdmin() {
+  const { profile } = useAgencyProfile()
   const [showAddModal, setShowAddModal] = useState(false)
   const [search, setSearch] = useState('')
+  const [agents, setAgents] = useState<SalesAgent[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const filteredAgents = mockSalesAgents.filter(a =>
-    a.name.toLowerCase().includes(search.toLowerCase()) ||
-    a.email.toLowerCase().includes(search.toLowerCase()) ||
-    a.referral_code.toLowerCase().includes(search.toLowerCase())
-  )
+  useEffect(() => {
+    if (!profile?.agency_id) return
+    fetchAgents()
+  }, [profile?.agency_id])
 
-  const totalSales = mockSalesAgents.reduce((acc, a) => acc + a.total_sales, 0)
-  const totalActiveJamaah = mockSalesAgents.reduce((acc, a) => acc + a.active_jamaah, 0)
+  const fetchAgents = async () => {
+    try {
+      setError(null)
+      const { data, error: supabaseError } = await supabase
+        .from('sales_agents')
+        .select('*')
+        .eq('agency_id', profile?.agency_id)
+        .order('created_at', { ascending: false })
+
+      if (supabaseError) throw supabaseError
+      setAgents(data || [])
+    } catch (err) {
+      console.error('Error fetching agents:', err)
+      setError('Failed to load agents. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const filteredAgents = useMemo(() => {
+    if (!search.trim()) return agents
+    const searchLower = search.toLowerCase()
+    return agents.filter(a =>
+      a.name.toLowerCase().includes(searchLower) ||
+      a.email.toLowerCase().includes(searchLower) ||
+      a.referral_code.toLowerCase().includes(searchLower)
+    )
+  }, [agents, search])
+
+  const totalSales = useMemo(() => agents.reduce((acc, a) => acc + (a.total_sales || 0), 0), [agents])
+  const totalActiveJamaah = useMemo(() => agents.reduce((acc, a) => acc + (a.active_jamaah || 0), 0), [agents])
 
   const copyReferralCode = (code: string) => {
     navigator.clipboard.writeText(code)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <p className="text-red-600 mb-2">{error}</p>
+          <button onClick={fetchAgents} className="btn-primary">
+            Retry
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -40,7 +95,7 @@ export default function AgentsTravelAdmin() {
           <div className="flex items-start justify-between">
             <div>
               <p className="text-sm text-gray-500 mb-1">Total Agents</p>
-              <p className="text-2xl font-bold text-gray-900">{mockSalesAgents.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{agents.length}</p>
             </div>
             <div className="p-3 bg-emerald-50 rounded-lg">
               <Users className="w-6 h-6 text-emerald-600" />
@@ -74,7 +129,7 @@ export default function AgentsTravelAdmin() {
             <div>
               <p className="text-sm text-gray-500 mb-1">Conversion Rate</p>
               <p className="text-2xl font-bold text-amber-600">
-                {Math.round((totalActiveJamaah / totalSales) * 100)}%
+                {totalSales > 0 ? Math.round((totalActiveJamaah / totalSales) * 100) : 0}%
               </p>
             </div>
             <div className="p-3 bg-amber-50 rounded-lg">
@@ -114,55 +169,63 @@ export default function AgentsTravelAdmin() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {filteredAgents.map((agent) => (
-                <tr key={agent.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-                        <span className="text-purple-700 font-medium text-sm">
-                          {agent.name.split(' ').map(n => n[0]).join('')}
-                        </span>
-                      </div>
-                      <p className="font-medium text-gray-900">{agent.name}</p>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <p className="text-gray-600">{agent.email}</p>
-                    <p className="text-xs text-gray-500">{agent.phone}</p>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <code className="px-2 py-1 bg-gray-100 rounded text-sm font-mono font-bold">
-                        {agent.referral_code}
-                      </code>
-                      <button 
-                        onClick={() => copyReferralCode(agent.referral_code)}
-                        className="p-1 text-gray-400 hover:text-gray-600"
-                      >
-                        <Copy className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 font-medium text-gray-900">{agent.total_sales}</td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-16 bg-gray-200 rounded-full h-2">
-                        <div 
-                          className="bg-emerald-500 h-2 rounded-full"
-                          style={{ width: `${(agent.active_jamaah / agent.total_sales) * 100}%` }}
-                        />
-                      </div>
-                      <span className="text-sm text-gray-600">{agent.active_jamaah}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-gray-600">{agent.joined_at}</td>
-                  <td className="px-6 py-4">
-                    <button className="text-emerald-600 hover:text-emerald-700 text-sm font-medium">
-                      View
-                    </button>
+              {filteredAgents.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                    {search ? 'No agents match your search.' : 'No agents found. Add your first agent to get started.'}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredAgents.map((agent) => (
+                  <tr key={agent.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+                          <span className="text-purple-700 font-medium text-sm">
+                            {agent.name.split(' ').map(n => n[0]).join('')}
+                          </span>
+                        </div>
+                        <p className="font-medium text-gray-900">{agent.name}</p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="text-gray-600">{agent.email}</p>
+                      <p className="text-xs text-gray-500">{agent.phone}</p>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <code className="px-2 py-1 bg-gray-100 rounded text-sm font-mono font-bold">
+                          {agent.referral_code}
+                        </code>
+                        <button 
+                          onClick={() => copyReferralCode(agent.referral_code)}
+                          className="p-1 text-gray-400 hover:text-gray-600"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 font-medium text-gray-900">{agent.total_sales || 0}</td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-16 bg-gray-200 rounded-full h-2">
+                          <div 
+                            className="bg-emerald-500 h-2 rounded-full"
+                            style={{ width: `${agent.total_sales > 0 ? (agent.active_jamaah / agent.total_sales) * 100 : 0}%` }}
+                          />
+                        </div>
+                        <span className="text-sm text-gray-600">{agent.active_jamaah || 0}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-gray-600">{agent.joined_at}</td>
+                    <td className="px-6 py-4">
+                      <button className="text-emerald-600 hover:text-emerald-700 text-sm font-medium">
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

@@ -50,24 +50,60 @@ serve(async (req) => {
 
     // GET: list invoices
     if (req.method === 'GET') {
+      const canFilterAgency = role === 'super_admin' || role === 'admin_haramain_pro';
       let targetAgencyId = tokenAgencyId;
-      if (role === 'super_admin' || role === 'admin_haramain_pro') {
-        targetAgencyId = url.searchParams.get('agency_id') || tokenAgencyId;
+
+      if (canFilterAgency) {
+        const agencyIdParam = url.searchParams.get('agency_id');
+        targetAgencyId = agencyIdParam || ''; // empty string means all agencies
       }
 
       const status = url.searchParams.get('status');
       const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+      const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
+      const page = Math.max(parseInt(url.searchParams.get('page') || '1'), 1);
 
-      let query = `${SUPABASE_URL}/rest/v1/invoices?agency_id=eq.${targetAgencyId}&order=created_at.desc&limit=${limit}`;
-      if (status) query += `&status=eq.${status}`;
+      // Date range filters (by billing_period_start / billing_period_end)
+      const dateFrom = url.searchParams.get('date_from');
+      const dateTo = url.searchParams.get('date_to');
 
-      const invRes = await fetch(query, { headers });
+      // Build query params array
+      const queryParams = new URLSearchParams();
+      queryParams.set('order', 'created_at.desc');
+      queryParams.set('limit', String(limit));
+      queryParams.set('offset', String(offset));
+
+      // Agency filter (only apply if targetAgencyId is non-empty, otherwise return all)
+      if (targetAgencyId) {
+        queryParams.set('agency_id', `eq.${targetAgencyId}`);
+      }
+      if (status) queryParams.set('status', `eq.${status}`);
+      if (dateFrom) queryParams.set('billing_period_start', `gte.${dateFrom}`);
+      if (dateTo) queryParams.set('billing_period_end', `lte.${dateTo}`);
+
+      // Total count query (same filters, no pagination)
+      const countParams = new URLSearchParams();
+      if (targetAgencyId) countParams.set('agency_id', `eq.${targetAgencyId}`);
+      if (status) countParams.set('status', `eq.${status}`);
+      if (dateFrom) countParams.set('billing_period_start', `gte.${dateFrom}`);
+      if (dateTo) countParams.set('billing_period_end', `lte.${dateTo}`);
+      countParams.set('select', 'id');
+
+      const [invRes, countRes] = await Promise.all([
+        fetch(`${SUPABASE_URL}/rest/v1/invoices?${queryParams.toString()}`, { headers }),
+        fetch(`${SUPABASE_URL}/rest/v1/invoices?${countParams.toString()}`, { headers }),
+      ]);
+
       const invoices: any[] = await invRes.json();
+      const countData: any[] = await countRes.json();
+      const total = countData.length;
+      const totalPages = Math.ceil(total / limit);
 
       return Response.json({
         invoices: invoices.map(inv => ({
           id: inv.id,
           invoice_number: inv.invoice_number,
+          agency_id: inv.agency_id,
           billing_period_start: inv.billing_period_start,
           billing_period_end: inv.billing_period_end,
           active_pax_count: inv.active_pax_count,
@@ -81,7 +117,15 @@ serve(async (req) => {
           pdf_url: inv.pdf_url,
           created_at: inv.created_at,
         })),
-        count: invoices.length,
+        pagination: {
+          page,
+          limit,
+          offset,
+          total,
+          total_pages: totalPages,
+          has_next: page < totalPages,
+          has_prev: page > 1,
+        },
       }, { headers: corsHeaders });
 
     // POST: generate invoice

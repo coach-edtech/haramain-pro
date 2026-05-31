@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "https://cdn.skypack.dev/": "https://esm.sh/",
+    "https://cdn.skypack.dev": "https://esm.sh"
+  }
+}

@@ -9,7 +9,7 @@ const XENDIT_CALLBACK_SECRET = Deno.env.get('XENDIT_CALLBACK_SECRET');
 
 // CORS headers - no wildcard, specific origins only
 const corsHeaders = {
-  'Access-Control-Allow-Origin': 'https:// Haramain Pro.app',
+  'Access-Control-Allow-Origin': 'https://haramain.pro',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, content-type',
   'Access-Control-Max-Age': '86400',

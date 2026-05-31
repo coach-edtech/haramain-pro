@@ -1,42 +1,90 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:uuid/uuid.dart';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:uuid/uuid.dart';
 import '../../services/location_service.dart';
-import '../../config/constants.dart';
 
-/// Panic alert status
+/// Panic alert status enum
 enum PanicStatus {
   pending,
   sent,
-  failed,
-  responded,
+  acknowledged,
+  responded, // maps to 'call'/'sms'/'location' response_type
   resolved,
+  failed,
 }
 
-/// Panic alert data model
+/// Panic response action enum — Indonesian labels for UI clarity
+enum PanicResponseAction {
+  // Indonesian response actions (used in UI)
+  stayJemput,  // "Stay, saya jemput" — muthawif will pick up
+  sayaDiSini, // "Saya di sini" — share location
+  telepon,     // Phone call
+  dismiss,     // Dismiss alert
+}
+
+/// Converts string status from DB to PanicStatus enum
+PanicStatus _stringToStatus(String? status) {
+  switch (status) {
+    case 'sent': return PanicStatus.sent;
+    case 'acknowledged': return PanicStatus.acknowledged;
+    case 'call': case 'sms': case 'location': return PanicStatus.responded;
+    case 'resolved': return PanicStatus.resolved;
+    case 'failed': return PanicStatus.failed;
+    default: return PanicStatus.pending;
+  }
+}
+
+/// Converts PanicStatus enum to string for DB
+String _statusToString(PanicStatus status) {
+  switch (status) {
+    case PanicStatus.pending: return 'pending';
+    case PanicStatus.sent: return 'sent';
+    case PanicStatus.acknowledged: return 'acknowledged';
+    case PanicStatus.responded: return 'responded';
+    case PanicStatus.resolved: return 'resolved';
+    case PanicStatus.failed: return 'failed';
+  }
+}
+
+/// Result of a panic alert send operation
+class PanicResult {
+  final bool success;
+  final String? error;
+  final String? alertId;
+  final bool usedSmsFallback;
+
+  const PanicResult({
+    required this.success,
+    this.error,
+    this.alertId,
+    this.usedSmsFallback = false,
+  });
+}
+
+/// Panic alert model — schema matches DB `panic_alerts` table
 class PanicAlert {
   final String id;
-  final String jamaaahId;
-  final String rombonganId;
-  final double latitude;
-  final double longitude;
+  final String jamaaahId; // maps to user_id in DB
+  final String? grupId; // maps to agency_id in DB
+  final String? responseType; // raw response_type from DB: 'call','sms','location','dismiss'
+  final String? responderId;
+  final double latitude; // maps to lat in DB
+  final double longitude; // maps to lng in DB
   final double? accuracy;
   final double? altitude;
   final String? message;
-  final DateTime timestamp;
-  final PanicStatus status;
-  final String? responderId;
-  final String? responseType;
-
-  String get grupId => rombonganId;
+  final DateTime timestamp; // maps to created_at in DB
+  final PanicStatus status; // derived from response_type
 
   const PanicAlert({
     required this.id,
     required this.jamaaahId,
-    required this.rombonganId,
+    this.grupId,
+    this.responseType,
+    this.responderId,
     required this.latitude,
     required this.longitude,
     this.accuracy,
@@ -44,237 +92,181 @@ class PanicAlert {
     this.message,
     required this.timestamp,
     this.status = PanicStatus.pending,
-    this.responderId,
-    this.responseType,
   });
 
   factory PanicAlert.create({
     required String jamaaahId,
-    required String rombonganId,
+    String? grupId,
     required LocationData location,
     String? message,
   }) {
     return PanicAlert(
       id: const Uuid().v4(),
       jamaaahId: jamaaahId,
-      rombonganId: rombonganId,
-      latitude: location.latitude,
-      longitude: location.longitude,
+      grupId: grupId,
+      latitude: location.latitude ?? 0,
+      longitude: location.longitude ?? 0,
       accuracy: location.accuracy,
       altitude: location.altitude,
       message: message,
-      timestamp: location.timestamp,
+      timestamp: DateTime.now(),
       status: PanicStatus.pending,
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'jamaah_id': jamaaahId,
-      'rombongan_id': rombonganId,
-      'latitude': latitude,
-      'longitude': longitude,
-      'accuracy': accuracy,
-      'altitude': altitude,
-      'message': message,
-      'timestamp': timestamp.toIso8601String(),
-      'status': status.name,
-      'responder_id': responderId,
-      'response_type': responseType,
-    };
-  }
-
-  Map<String, dynamic> toEdgeFunctionPayload() {
-    return {
-      'rombonganId': rombonganId,
-      'latitude': latitude,
-      'longitude': longitude,
-      'accuracy': accuracy,
-      'altitude': altitude,
-      'message': message,
-      'timestamp': timestamp.toIso8601String(),
-    };
-  }
-
   factory PanicAlert.fromJson(Map<String, dynamic> json) {
+    final rawStatus = json['response_type'] as String?;
     return PanicAlert(
-      id: json['id'] as String,
-      jamaaahId: json['jamaah_id'] as String,
-      rombonganId: json['rombongan_id'] as String,
-      latitude: (json['latitude'] as num).toDouble(),
-      longitude: (json['longitude'] as num).toDouble(),
+      id: json['id'] as String? ?? '',
+      jamaaahId: (json['user_id'] ?? json['jamaaah_id'] ?? '') as String,
+      grupId: json['rombongan_id'] as String? ?? json['agency_id'] as String?,
+      responseType: rawStatus,
+      responderId: json['responder_id'] as String?,
+      latitude: (json['lat'] ?? json['latitude'] as num?)?.toDouble() ?? 0,
+      longitude: (json['lng'] ?? json['longitude'] as num?)?.toDouble() ?? 0,
       accuracy: (json['accuracy'] as num?)?.toDouble(),
       altitude: (json['altitude'] as num?)?.toDouble(),
       message: json['message'] as String?,
-      timestamp: DateTime.parse(json['timestamp'] as String),
-      status: PanicStatus.values.firstWhere(
-        (e) => e.name == json['status'],
-        orElse: () => PanicStatus.pending,
-      ),
-      responderId: json['responder_id'] as String?,
-      responseType: json['response_type'] as String?,
+      timestamp: json['created_at'] != null
+          ? DateTime.parse(json['created_at'] as String)
+          : DateTime.now(),
+      status: _stringToStatus(rawStatus),
     );
   }
 
   PanicAlert copyWith({
-    String? id,
-    String? jamaaahId,
-    String? rombonganId,
-    double? latitude,
-    double? longitude,
-    double? accuracy,
-    double? altitude,
-    String? message,
-    DateTime? timestamp,
-    PanicStatus? status,
-    String? responderId,
     String? responseType,
+    String? responderId,
+    PanicStatus? status,
   }) {
     return PanicAlert(
-      id: id ?? this.id,
-      jamaaahId: jamaaahId ?? this.jamaaahId,
-      rombonganId: rombonganId ?? this.rombonganId,
-      latitude: latitude ?? this.latitude,
-      longitude: longitude ?? this.longitude,
-      accuracy: accuracy ?? this.accuracy,
-      altitude: altitude ?? this.altitude,
-      message: message ?? this.message,
-      timestamp: timestamp ?? this.timestamp,
-      status: status ?? this.status,
-      responderId: responderId ?? this.responderId,
+      id: id,
+      jamaaahId: jamaaahId,
+      grupId: grupId,
       responseType: responseType ?? this.responseType,
+      responderId: responderId ?? this.responderId,
+      latitude: latitude,
+      longitude: longitude,
+      accuracy: accuracy,
+      altitude: altitude,
+      message: message,
+      timestamp: timestamp,
+      status: status ?? this.status,
     );
   }
 
-  @override
-  String toString() {
-    return 'PanicAlert(id: $id, jamaah: $jamaaahId, rombongan: $rombonganId, lat: $latitude, lng: $longitude, status: ${status.name})';
-  }
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'user_id': jamaaahId,
+        'rombongan_id': grupId,
+        'lat': latitude,
+        'lng': longitude,
+        'accuracy': accuracy,
+        'altitude': altitude,
+        'message': message,
+        'created_at': timestamp.toIso8601String(),
+        'response_type': responseType,
+        'responder_id': responderId,
+      };
+
+  Map<String, dynamic> toEdgeFunctionPayload() => {
+        'alert_id': id,
+        'jamaaah_id': jamaaahId,
+        'rombongan_id': grupId,
+        'latitude': latitude,
+        'longitude': longitude,
+        'accuracy': accuracy,
+        'altitude': altitude,
+        'message': message,
+        'timestamp': timestamp.toIso8601String(),
+      };
 }
 
-/// Panic service result
-class PanicResult {
-  final bool success;
-  final String? alertId;
-  final String? error;
-  final bool usedSmsFallback;
-
-  const PanicResult({
-    required this.success,
-    this.alertId,
-    this.error,
-    this.usedSmsFallback = false,
-  });
-}
-
-/// Response action types
-class PanicResponseAction {
-  static const String stayJemput = 'stay_jemput';
-  static const String sayaDiSini = 'saya_di_sini';
-  static const String telepon = 'telepon';
-}
-
-/// Panic service for sending and managing panic alerts
+/// Panic service — rate limit, history, and offline queue all stored in Supabase `panic_alerts`
+/// FCM sending requires backend Edge Function (not called directly from client)
 class PanicService {
   static final PanicService _instance = PanicService._internal();
   static PanicService get instance => _instance;
 
   PanicService._internal();
 
-  static const String _offlineQueueKey = 'panic_offline_queue';
-  static const String _lastPanicKey = 'panic_last_sent';
+  SupabaseClient get _sb => Supabase.instance.client;
+
   static const int _maxRetries = 3;
   static const int _rateLimitSeconds = 300; // 5 minutes
-  
+
   // Exponential backoff delays: 1s, 2s, 4s
   static const List<int> _backoffDelays = [1000, 2000, 4000];
 
   final LocationService _locationService = LocationService.instance;
 
-  // Cached SharedPreferences instance for synchronous access
-  static SharedPreferences? _prefs;
-
   // Connectivity subscription for offline queue processing
-  StreamSubscription<ConnectivityResult>? _connectivitySubscription;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
-  /// Initialize SharedPreferences and connectivity listener - call this at app startup
-  static Future<void> initialize() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    await instance._startConnectivityListener();
+  /// Initialize connectivity listener — call at app startup
+  Future<void> initialize() async {
+    await _startConnectivityListener();
   }
 
   /// Start listening to connectivity changes to process offline queue when online
   Future<void> _startConnectivityListener() async {
-    // Cancel any existing subscription
     await _connectivitySubscription?.cancel();
 
-    // Subscribe to connectivity changes
     _connectivitySubscription = Connectivity()
         .onConnectivityChanged
         .listen((List<ConnectivityResult> results) {
-      // If any connectivity is available (not none), process the offline queue
       if (results.isNotEmpty && !results.contains(ConnectivityResult.none)) {
-        debugPrint('Connectivity restored, processing offline queue...');
+        debugPrint('PanicService: Connectivity restored, processing offline queue...');
         processOfflineQueue().catchError((e) {
-          debugPrint('Error processing offline queue: $e');
+          debugPrint('PanicService: Error processing offline queue: $e');
         });
       }
     }, onError: (e) {
-      debugPrint('Connectivity listener error: $e');
+      debugPrint('PanicService: Connectivity listener error: $e');
     });
 
-    debugPrint('PanicService connectivity listener started');
+    debugPrint('PanicService: Connectivity listener started');
   }
 
-  /// Stop connectivity listener - call when service is disposed
+  /// Stop connectivity listener — call when service is disposed
   Future<void> stopConnectivityListener() async {
     await _connectivitySubscription?.cancel();
     _connectivitySubscription = null;
-    debugPrint('PanicService connectivity listener stopped');
+    debugPrint('PanicService: Connectivity listener stopped');
   }
 
+  /// Check if user can send panic (rate limit via Supabase)
   Future<bool> _checkRateLimit(String jamaaahId) async {
-    final prefs = _prefs ?? await SharedPreferences.getInstance();
-    final lastSentStr = prefs.getString('${_lastPanicKey}_$jamaaahId');
-    
-    if (lastSentStr == null) return true;
-    
-    final lastSent = DateTime.tryParse(lastSentStr);
-    if (lastSent == null) return true;
-    
+    final result = await _sb
+        .from('panic_alerts')
+        .select('created_at')
+        .eq('user_id', jamaaahId)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    if (result == null) return true;
+
+    final lastSent = DateTime.parse(result['created_at'] as String);
     final elapsed = DateTime.now().difference(lastSent);
-    if (elapsed.inSeconds >= _rateLimitSeconds) {
-      return true;
-    }
-    
-    return false;
+    return elapsed.inSeconds >= _rateLimitSeconds;
   }
 
-  Future<void> _updateRateLimit(String jamaaahId) async {
-    final prefs = _prefs ?? await SharedPreferences.getInstance();
-    await prefs.setString(
-      '${_lastPanicKey}_$jamaaahId',
-      DateTime.now().toIso8601String(),
-    );
-  }
+  /// Get remaining cooldown seconds for UI display
+  Future<int> getRemainingCooldownSeconds(String jamaaahId) async {
+    final result = await _sb
+        .from('panic_alerts')
+        .select('created_at')
+        .eq('user_id', jamaaahId)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
 
-  /// Returns the remaining cooldown seconds for a user.
-  /// Returns 0 if no cooldown is active or SharedPreferences is not initialized.
-  /// This is a sync helper - for async check use _checkRateLimit.
-  int getRemainingCooldownSeconds(String jamaaahId) {
-    final prefs = _prefs;
-    if (prefs == null) return 0;
+    if (result == null) return 0;
 
-    final lastSentStr = prefs.getString('${_lastPanicKey}_$jamaaahId');
-    if (lastSentStr == null) return 0;
-
-    final lastSent = DateTime.tryParse(lastSentStr);
-    if (lastSent == null) return 0;
-
+    final lastSent = DateTime.parse(result['created_at'] as String);
     final elapsed = DateTime.now().difference(lastSent);
     final remaining = _rateLimitSeconds - elapsed.inSeconds;
-    
     return remaining > 0 ? remaining : 0;
   }
 
@@ -282,11 +274,11 @@ class PanicService {
   /// Returns PanicResult indicating success or failure
   Future<PanicResult> sendPanic({
     required String jamaaahId,
-    required String rombonganId,
+    required String? caravanaId,
     LocationData? coordinates,
     String? message,
   }) async {
-    // Check rate limit
+    // Rate limit check
     final canSend = await _checkRateLimit(jamaaahId);
     if (!canSend) {
       return const PanicResult(
@@ -310,47 +302,44 @@ class PanicService {
     // Create panic alert
     final alert = PanicAlert.create(
       jamaaahId: jamaaahId,
-      rombonganId: rombonganId,
+      grupId: caravanaId,
       location: location,
       message: message,
     );
 
-    debugPrint('Sending panic alert: ${alert.id}');
+    debugPrint('PanicService: Sending panic alert: ${alert.id}');
 
     // Try to send with retries
     for (int attempt = 0; attempt <= _maxRetries; attempt++) {
       try {
-        // Attempt to send via FCM/Critical Alert
         final sent = await _sendViaFcm(alert);
-        
+
         if (sent) {
-          debugPrint('Panic alert sent successfully via FCM');
-          await _updateRateLimit(jamaaahId);
-          await _removeFromOfflineQueue(alert.id);
-          await savePanicHistory(alert);
+          debugPrint('PanicService: Panic alert sent successfully via FCM');
+          // Update status in Supabase
+          await _sb
+              .from('panic_alerts')
+              .update({'response_type': 'sent'})
+              .eq('id', alert.id);
           return PanicResult(success: true, alertId: alert.id);
         }
       } catch (e) {
-        debugPrint('FCM send attempt $attempt failed: $e');
+        debugPrint('PanicService: FCM send attempt $attempt failed: $e');
       }
 
-      // If not last attempt, wait with exponential backoff
       if (attempt < _maxRetries) {
         final delayMs = _backoffDelays[attempt];
-        debugPrint('Retrying in ${delayMs}ms...');
+        debugPrint('PanicService: Retrying in ${delayMs}ms...');
         await Future.delayed(Duration(milliseconds: delayMs));
       }
     }
 
     // All FCM attempts failed, try SMS fallback
-    debugPrint('FCM failed after $_maxRetries retries, attempting SMS fallback');
-    
+    debugPrint('PanicService: FCM failed after $_maxRetries retries, attempting SMS fallback');
+
     try {
       final smsResult = await _sendViaSms(alert);
       if (smsResult) {
-        await _updateRateLimit(jamaaahId);
-        await _removeFromOfflineQueue(alert.id);
-        await savePanicHistory(alert);
         return PanicResult(
           success: true,
           alertId: alert.id,
@@ -358,14 +347,13 @@ class PanicService {
         );
       }
     } catch (e) {
-      debugPrint('SMS fallback also failed: $e');
+      debugPrint('PanicService: SMS fallback also failed: $e');
     }
 
-    // Both FCM and SMS failed, add to offline queue
-    debugPrint('Adding panic alert to offline queue');
-    await _addToOfflineQueue(alert);
-    await savePanicHistory(alert);
-    
+    // Both FCM and SMS failed, insert to Supabase as pending for later retry
+    debugPrint('PanicService: Adding panic alert to offline queue in Supabase');
+    await _insertPanicAlert(alert);
+
     return PanicResult(
       success: false,
       alertId: alert.id,
@@ -373,46 +361,52 @@ class PanicService {
     );
   }
 
-  /// Send panic via Supabase Edge Function
+  /// Insert panic alert into Supabase
+  Future<void> _insertPanicAlert(PanicAlert alert) async {
+    await _sb.from('panic_alerts').insert(alert.toJson());
+    debugPrint('PanicService: Inserted alert ${alert.id} into panic_alerts');
+  }
+
+  /// Send panic via Supabase Edge Function (FCM)
   Future<bool> _sendViaFcm(PanicAlert alert) async {
     try {
       final payload = alert.toEdgeFunctionPayload();
-      debugPrint('Sending panic alert to edge function: ${jsonEncode(payload)}');
+      debugPrint('PanicService: Sending panic alert to edge function: ${jsonEncode(payload)}');
 
-      final response = await Supabase.instance.client.functions.invoke(
+      final response = await _sb.functions.invoke(
         'fcm-panic-alert',
         body: payload,
       );
 
       if (response.data == null) {
-        debugPrint('Edge function returned null data');
+        debugPrint('PanicService: Edge function returned null data');
         return false;
       }
 
       final data = response.data as Map<String, dynamic>;
-      debugPrint('Edge function response: $data');
+      debugPrint('PanicService: Edge function response: $data');
 
       return data['status'] == 'success';
     } catch (e) {
-      debugPrint('Edge function call failed: $e');
+      debugPrint('PanicService: Edge function call failed: $e');
       return false;
     }
   }
 
-  /// Send panic via SMS fallback using Twilio/Nexmo
+  /// Send panic via SMS fallback using Twilio
   Future<bool> _sendViaSms(PanicAlert alert) async {
     try {
       final googleMapsUrl = 'https://maps.google.com/?q=${alert.latitude},${alert.longitude}';
       final smsMessage = alert.message ?? 'PANIC ALERT!';
       final fullMessage = '$smsMessage\nJamaah ID: ${alert.jamaaahId}\nLocation: $googleMapsUrl';
 
-      debugPrint('SMS fallback payload: $fullMessage');
+      debugPrint('PanicService: SMS fallback payload: $fullMessage');
 
-      final response = await Supabase.instance.client.functions.invoke(
+      final response = await _sb.functions.invoke(
         'twilio-voice-fallback',
         body: {
           'jamaaah_id': alert.jamaaahId,
-          'grup_id': alert.rombonganId,
+          'rombongan_id': alert.grupId,
           'latitude': alert.latitude,
           'longitude': alert.longitude,
           'timestamp': alert.timestamp.toIso8601String(),
@@ -422,99 +416,47 @@ class PanicService {
       );
 
       if (response.data == null) {
-        debugPrint('SMS fallback returned null data');
+        debugPrint('PanicService: SMS fallback returned null data');
         return false;
       }
 
       final data = response.data as Map<String, dynamic>;
-      debugPrint('SMS fallback response: $data');
+      debugPrint('PanicService: SMS fallback response: $data');
 
       return data['status'] == 'success';
     } catch (e) {
-      debugPrint('SMS fallback failed: $e');
+      debugPrint('PanicService: SMS fallback failed: $e');
       return false;
     }
   }
 
-  /// Add alert to offline queue for later retry
-  Future<void> _addToOfflineQueue(PanicAlert alert) async {
-    final prefs = await SharedPreferences.getInstance();
-    final queueJson = prefs.getString(_offlineQueueKey);
-    
-    List<PanicAlert> queue = [];
-    if (queueJson != null) {
-      final List<dynamic> decoded = jsonDecode(queueJson);
-      queue = decoded.map((e) => PanicAlert.fromJson(e)).toList();
-    }
-    
-    // Check if already in queue
-    if (queue.any((a) => a.id == alert.id)) return;
-    
-    queue.add(alert);
-    await prefs.setString(
-      _offlineQueueKey,
-      jsonEncode(queue.map((a) => a.toJson()).toList()),
-    );
-    
-    debugPrint('Added alert ${alert.id} to offline queue. Queue size: ${queue.length}');
-  }
-
-  /// Remove alert from offline queue
-  Future<void> _removeFromOfflineQueue(String alertId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final queueJson = prefs.getString(_offlineQueueKey);
-    
-    if (queueJson == null) return;
-    
-    final List<dynamic> decoded = jsonDecode(queueJson);
-    List<PanicAlert> queue = decoded.map((e) => PanicAlert.fromJson(e)).toList();
-    
-    queue.removeWhere((a) => a.id == alertId);
-    
-    await prefs.setString(
-      _offlineQueueKey,
-      jsonEncode(queue.map((a) => a.toJson()).toList()),
-    );
-    
-    debugPrint('Removed alert $alertId from offline queue');
-  }
-
-  /// Get all alerts in offline queue
-  Future<List<PanicAlert>> getOfflineQueue() async {
-    final prefs = await SharedPreferences.getInstance();
-    final queueJson = prefs.getString(_offlineQueueKey);
-    
-    if (queueJson == null) return [];
-    
-    final List<dynamic> decoded = jsonDecode(queueJson);
-    return decoded.map((e) => PanicAlert.fromJson(e)).toList();
-  }
-
-  /// Process offline queue - retry all pending alerts
+  /// Process offline queue — retry all pending alerts
   Future<void> processOfflineQueue() async {
+    final userId = _sb.auth.currentUser?.id;
+    if (userId == null) return;
+
     final queue = await getOfflineQueue();
-    
+
     if (queue.isEmpty) {
-      debugPrint('Offline queue is empty, nothing to process');
+      debugPrint('PanicService: Offline queue is empty, nothing to process');
       return;
     }
-    
-    debugPrint('Processing offline queue with ${queue.length} alerts');
-    
+
+    debugPrint('PanicService: Processing offline queue with ${queue.length} alerts');
+
     for (final alert in queue) {
-      // Try to resend each alert
       for (int attempt = 0; attempt <= _maxRetries; attempt++) {
         try {
           final sent = await _sendViaFcm(alert);
           if (sent) {
-            await _removeFromOfflineQueue(alert.id);
-            debugPrint('Successfully resent offline alert: ${alert.id}');
+            await _sb.from('panic_alerts').delete().eq('id', alert.id);
+            debugPrint('PanicService: Successfully resent offline alert: ${alert.id}');
             break;
           }
         } catch (e) {
-          debugPrint('Resend attempt $attempt failed for ${alert.id}: $e');
+          debugPrint('PanicService: Resend attempt $attempt failed for ${alert.id}: $e');
         }
-        
+
         if (attempt < _maxRetries) {
           await Future.delayed(Duration(milliseconds: _backoffDelays[attempt]));
         }
@@ -522,146 +464,88 @@ class PanicService {
     }
   }
 
-  /// Save panic history
-  Future<void> savePanicHistory(PanicAlert alert) async {
-    final prefs = await SharedPreferences.getInstance();
-    final historyKey = 'panic_history';
-    
-    final historyJson = prefs.getString(historyKey);
-    List<PanicAlert> history = [];
-    
-    if (historyJson != null) {
-      final List<dynamic> decoded = jsonDecode(historyJson);
-      history = decoded.map((e) => PanicAlert.fromJson(e)).toList();
-    }
-    
-    // Add or update alert in history
-    final existingIndex = history.indexWhere((a) => a.id == alert.id);
-    if (existingIndex >= 0) {
-      history[existingIndex] = alert;
-    } else {
-      history.insert(0, alert); // Add to beginning
-    }
-    
-    // Keep only last 100 entries
-    if (history.length > 100) {
-      history = history.sublist(0, 100);
-    }
-    
-    await prefs.setString(
-      historyKey,
-      jsonEncode(history.map((a) => a.toJson()).toList()),
-    );
+  /// Get all pending panic alerts for current user from Supabase
+  Future<List<PanicAlert>> getOfflineQueue() async {
+    final userId = _sb.auth.currentUser?.id;
+    if (userId == null) return [];
+
+    final result = await _sb
+        .from('panic_alerts')
+        .select()
+        .eq('user_id', userId)
+        .filter('sync_status', 'is', 'null');
+
+    return (result as List)
+        .map((e) => PanicAlert.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
-  /// Get panic history
-  Future<List<PanicAlert>> getPanicHistory({DateTime? fromDate, DateTime? toDate}) async {
-    final prefs = await SharedPreferences.getInstance();
-    final historyKey = 'panic_history';
-    
-    final historyJson = prefs.getString(historyKey);
-    if (historyJson == null) return [];
-    
-    final List<dynamic> decoded = jsonDecode(historyJson);
-    List<PanicAlert> history = decoded.map((e) => PanicAlert.fromJson(e)).toList();
-    
+  /// Get panic history for current user
+  Future<List<PanicAlert>> getPanicHistory({
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) async {
+    final userId = _sb.auth.currentUser?.id;
+    if (userId == null) return [];
+
+    var query = _sb
+        .from('panic_alerts')
+        .select()
+        .eq('user_id', userId)
+        .order('created_at', ascending: false)
+        .limit(100);
+
+    final result = await query;
+
+    var alerts = (result as List)
+        .map((e) => PanicAlert.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+
     // Filter by date if provided
     if (fromDate != null) {
-      history = history.where((a) => a.timestamp.isAfter(fromDate)).toList();
+      alerts = alerts.where((a) => a.timestamp.isAfter(fromDate)).toList();
     }
     if (toDate != null) {
-      history = history.where((a) => a.timestamp.isBefore(toDate)).toList();
+      alerts = alerts.where((a) => a.timestamp.isBefore(toDate)).toList();
     }
-    
-    return history;
+
+    return alerts;
   }
 
-  /// Update panic status in Supabase + local cache
-  /// Returns true if update succeeded
-  Future<bool> updatePanicStatus(
-    String alertId,
-    PanicStatus status, {
+  /// Respond to a panic alert — Indonesian response actions
+  Future<void> respondToPanic({
+    required String alertId,
+    required PanicResponseAction action,
     String? responderId,
-    String? responseType,
   }) async {
-    // If this is a responder action, call the Edge Function
-    if (status == PanicStatus.responded && responderId != null && responseType != null) {
-      try {
-        final response = await Supabase.instance.client.functions.invoke(
-          'panic-response',
-          body: {
-            'alert_id': alertId,
-            'responder_id': responderId,
-            'action': responseType,
-          },
-        );
+    final actionMap = {
+      PanicResponseAction.stayJemput: 'stay',
+      PanicResponseAction.sayaDiSini: 'here',
+      PanicResponseAction.telepon: 'call',
+      PanicResponseAction.dismiss: 'dismiss',
+    };
 
-        if (response.data == null) {
-          debugPrint('panic-response returned null data');
-          // Fall through to local update
-        } else {
-          final data = response.data as Map<String, dynamic>;
-          debugPrint('panic-response response: $data');
-          if (data['status'] == 'success') {
-            // Update local cache with server-confirmed data
-            await _updateLocalPanicHistory(
-              alertId,
-              status: status,
-              responderId: responderId,
-              responseType: responseType,
-            );
-            return true;
-          } else {
-            debugPrint('panic-response failed: ${data['error']}');
-            // Fall through to local update (optimistic)
-          }
-        }
-      } catch (e) {
-        debugPrint('panic-response edge function call failed: $e');
-        // Fall through to local update
-      }
-    }
+    await _sb.from('panic_alerts').update({
+      'response_type': actionMap[action],
+      'responder_id': responderId,
+    }).eq('id', alertId);
 
-    // Local-only update (for non-responder statuses or when edge function fails)
-    await _updateLocalPanicHistory(
-      alertId,
-      status: status,
-      responderId: responderId,
-      responseType: responseType,
-    );
-    return true;
+    debugPrint('PanicService: Responded to alert $alertId with action ${actionMap[action]}');
   }
 
-  /// Update local SharedPreferences history only
-  Future<void> _updateLocalPanicHistory(
-    String alertId, {
+  /// Update panic alert status
+  Future<void> updatePanicStatus({
+    required String alertId,
     required PanicStatus status,
     String? responderId,
     String? responseType,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    final historyKey = 'panic_history';
+    await _sb.from('panic_alerts').update({
+      'response_type': responseType ?? _statusToString(status),
+      'responder_id': responderId,
+    }).eq('id', alertId);
 
-    final historyJson = prefs.getString(historyKey);
-    if (historyJson == null) return;
-
-    final List<dynamic> decoded = jsonDecode(historyJson);
-    List<PanicAlert> history = decoded.map((e) => PanicAlert.fromJson(e)).toList();
-
-    final index = history.indexWhere((a) => a.id == alertId);
-    if (index >= 0) {
-      history[index] = history[index].copyWith(
-        status: status,
-        responderId: responderId,
-        responseType: responseType,
-      );
-
-      await prefs.setString(
-        historyKey,
-        jsonEncode(history.map((a) => a.toJson()).toList()),
-      );
-      debugPrint('Updated local panic history for alert $alertId');
-    }
+    debugPrint('PanicService: Updated alert $alertId status to ${_statusToString(status)}');
   }
 }
 

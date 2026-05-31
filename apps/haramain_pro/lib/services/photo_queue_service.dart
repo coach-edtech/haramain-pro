@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:uuid/uuid.dart';
 import 'storage_service.dart';
 
 class PhotoQueueItem {
@@ -61,6 +61,22 @@ class PhotoQueueItem {
       errorMessage: json['errorMessage'] as String?,
     );
   }
+
+  /// Create from Supabase row (no local imageData — fetched from localPath)
+  factory PhotoQueueItem.fromSupabase(Map<String, dynamic> row) {
+    return PhotoQueueItem(
+      id: row['id'] as String,
+      localPath: '', // not stored in Supabase
+      imageData: null,
+      lat: (row['lat'] as num).toDouble(),
+      lng: (row['lng'] as num).toDouble(),
+      createdAt: DateTime.parse(row['created_at'] as String),
+      caption: null,
+      isSynced: false,
+      remoteUrl: null,
+      errorMessage: null,
+    );
+  }
 }
 
 class PhotoQueueService {
@@ -68,28 +84,30 @@ class PhotoQueueService {
   static PhotoQueueService get instance => _instance;
   PhotoQueueService._internal();
 
-  static const String _queueKey = 'photo_queue';
+  SupabaseClient get _sb => Supabase.instance.client;
   bool _isInitialized = false;
 
   Future<void> initialize() async {
     _isInitialized = true;
   }
 
+  /// Load all photo queue items for current user from Supabase
   Future<List<PhotoQueueItem>> _loadQueue() async {
-    final prefs = await SharedPreferences.getInstance();
-    final queueJson = prefs.getString(_queueKey);
-    if (queueJson == null) return [];
+    final userId = _sb.auth.currentUser?.id;
+    if (userId == null) return [];
 
-    final List<dynamic> decoded = jsonDecode(queueJson);
-    return decoded.map((e) => PhotoQueueItem.fromJson(e)).toList();
+    final result = await _sb
+        .from('photo_queue')
+        .select()
+        .eq('user_id', userId)
+        .order('created_at', ascending: true);
+
+    return (result as List)
+        .map((e) => PhotoQueueItem.fromSupabase(Map<String, dynamic>.from(e)))
+        .toList();
   }
 
-  Future<void> _saveQueue(List<PhotoQueueItem> queue) async {
-    final prefs = await SharedPreferences.getInstance();
-    final queueJson = jsonEncode(queue.map((e) => e.toJson()).toList());
-    await prefs.setString(_queueKey, queueJson);
-  }
-
+  /// Add photo to queue — insert into Supabase
   Future<void> addToQueue({
     required String localPath,
     required Uint8List imageData,
@@ -99,22 +117,26 @@ class PhotoQueueService {
   }) async {
     if (!_isInitialized) await initialize();
 
-    final item = PhotoQueueItem(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      localPath: localPath,
-      imageData: imageData,
-      lat: lat,
-      lng: lng,
-      createdAt: DateTime.now(),
-      caption: caption,
-      isSynced: false,
-    );
+    final userId = _sb.auth.currentUser?.id;
+    if (userId == null) {
+      debugPrint('PhotoQueueService: No authenticated user');
+      return;
+    }
 
-    final queue = await _loadQueue();
-    queue.add(item);
-    await _saveQueue(queue);
+    // Store base64 in Supabase for offline sync
+    final itemId = const Uuid().v4();
+    await _sb.from('photo_queue').insert({
+      'id': itemId,
+      'user_id': userId,
+      'base64': base64Encode(imageData),
+      'lat': lat,
+      'lng': lng,
+    });
+
+    debugPrint('PhotoQueueService: Added to queue $itemId');
   }
 
+  /// Process all pending items — upload to storage then delete from queue
   Future<void> processQueue() async {
     if (!_isInitialized) await initialize();
 
@@ -126,77 +148,73 @@ class PhotoQueueService {
     }
   }
 
+  /// Sync single item: upload photo to storage then delete from queue
   Future<void> _syncItem(PhotoQueueItem item) async {
     try {
-      final storage = StorageService.instance;
-      final userId = Supabase.instance.client.auth.currentUser?.id;
+      final userId = _sb.auth.currentUser?.id;
       if (userId == null) {
         item.errorMessage = 'User not authenticated';
-        await _updateItem(item);
         return;
       }
 
+      // Fetch base64 from Supabase since we don't have imageData locally
+      final row = await _sb
+          .from('photo_queue')
+          .select('base64')
+          .eq('id', item.id)
+          .maybeSingle();
+
+      if (row == null) {
+        item.errorMessage = 'Item not found in queue';
+        return;
+      }
+
+      final base64Str = row['base64'] as String?;
+      if (base64Str == null || base64Str.isEmpty) {
+        item.errorMessage = 'No image data found';
+        return;
+      }
+
+      final imageData = base64Decode(base64Str);
+
+      final storage = StorageService.instance;
       final remoteUrl = await storage.uploadJejakIbadahPhoto(
         userId: userId,
-        fileBytes: item.imageData!,
+        fileBytes: imageData,
         lat: item.lat,
         lng: item.lng,
       );
 
       if (remoteUrl != null) {
-        item.isSynced = true;
-        item.remoteUrl = remoteUrl;
-        await _updateItem(item);
-        debugPrint('Photo synced: $remoteUrl');
+        // Delete from Supabase queue after successful upload
+        await _sb.from('photo_queue').delete().eq('id', item.id);
+        debugPrint('PhotoQueueService: Synced and removed ${item.id}');
       }
     } catch (e) {
       item.errorMessage = e.toString();
-      await _updateItem(item);
-      debugPrint('Photo sync failed: $e');
-    }
-  }
-
-  Future<void> _updateItem(PhotoQueueItem updatedItem) async {
-    final queue = await _loadQueue();
-    final index = queue.indexWhere((item) => item.id == updatedItem.id);
-    if (index >= 0) {
-      queue[index] = updatedItem;
-      await _saveQueue(queue);
+      debugPrint('PhotoQueueService: Sync failed for ${item.id}: $e');
     }
   }
 
   Future<Map<String, int>> getQueueStatus() async {
     final queue = await _loadQueue();
     final total = queue.length;
-    final synced = queue.where((item) => item.isSynced).length;
-    final pending = total - synced;
-
-    return {
-      'total': total,
-      'synced': synced,
-      'pending': pending,
-    };
+    // Since we don't track sync status in Supabase, pending = all
+    final pending = total;
+    return {'total': total, 'synced': 0, 'pending': pending};
   }
 
   Future<List<PhotoQueueItem>> getPendingItems() async {
-    final queue = await _loadQueue();
-    return queue.where((item) => !item.isSynced).toList();
+    return _loadQueue();
   }
 
   Future<void> clearSyncedItems() async {
-    final queue = await _loadQueue();
-    queue.removeWhere((item) => item.isSynced);
-    await _saveQueue(queue);
+    // No-op: synced items are already deleted from Supabase
+    debugPrint('PhotoQueueService: clearSyncedItems — no action needed');
   }
 
   Future<void> retryFailedItems() async {
-    final queue = await _loadQueue();
-    final failedItems = queue.where((item) => !item.isSynced && item.errorMessage != null).toList();
-
-    for (final item in failedItems) {
-      item.errorMessage = null;
-      await _updateItem(item);
-      await _syncItem(item);
-    }
+    // Re-process all items
+    await processQueue();
   }
 }

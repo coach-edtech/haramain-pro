@@ -20,11 +20,11 @@ interface AdminSidebarProps {
 
 const adminNavItems = [
   { path: '/admin', label: 'Dashboard', icon: LayoutDashboard },
-  { path: '/admin/seat-licenses', label: 'Seat Licenses', icon: Shield, requireBilling: false },
+  { path: '/admin/seat-licenses', label: 'Seat Licenses', icon: Shield },
   { path: '/admin/travels', label: 'Travels', icon: Globe },
-  { path: '/admin/billing', label: 'Billing & Invoices', icon: CreditCard, requireBilling: true },
+  { path: '/admin/billing', label: 'Billing', icon: CreditCard, requireBilling: true },
   { path: '/admin/users', label: 'Users', icon: Users },
-  { path: '/admin/system', label: 'System Health', icon: Activity },
+  { path: '/admin/system', label: 'System', icon: Activity },
 ]
 
 export default function AdminSidebar({ userRole, isOpen, onClose }: AdminSidebarProps) {
@@ -39,59 +39,84 @@ export default function AdminSidebar({ userRole, isOpen, onClose }: AdminSidebar
 
   return (
     <>
+      {/* Mobile overlay */}
       {isOpen && (
         <div 
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 lg:hidden"
           onClick={onClose}
         />
       )}
+      
+      {/* Sidebar */}
       <aside className={clsx(
-        "w-64 bg-gray-900 text-white flex flex-col fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 lg:translate-x-0 lg:static lg:z-auto",
+        "w-64 bg-slate-900 text-white flex flex-col fixed inset-y-0 left-0 z-50",
+        "transform transition-transform duration-300 ease-out lg:translate-x-0 lg:static lg:z-auto",
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
-        <div className="flex items-center justify-between p-4 border-b border-gray-700 lg:hidden">
-          <h1 className="font-bold text-white">Haramain Pro</h1>
-          <button onClick={onClose} className="p-2 hover:bg-gray-800 rounded-lg">
+        {/* Mobile header */}
+        <div className="flex items-center justify-between p-4 border-b border-slate-700 lg:hidden">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-accent-500 to-accent-600 rounded-lg flex items-center justify-center">
+              <Shield className="w-6 h-6 text-white" />
+            </div>
+            <span className="font-bold text-white">Haramain Pro</span>
+          </div>
+          <button 
+            onClick={onClose} 
+            className="p-2 hover:bg-slate-800 rounded-lg transition-colors"
+            aria-label="Close sidebar"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="hidden lg:block p-6 border-b border-gray-700">
+
+        {/* Desktop header */}
+        <div className="hidden lg:block p-6 border-b border-slate-700">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-amber-500 to-orange-600 rounded-lg flex items-center justify-center">
-              <Shield className="w-6 h-6 text-white" />
+            <div className="w-12 h-12 bg-gradient-to-br from-accent-500 to-accent-600 rounded-xl flex items-center justify-center shadow-lg">
+              <Shield className="w-7 h-7 text-white" />
             </div>
             <div>
-              <h1 className="font-bold text-white">Haramain Pro</h1>
-              <p className="text-xs text-gray-400">{roleLabel}</p>
+              <h1 className="font-bold text-white text-lg">Haramain Pro</h1>
+              <p className="text-xs text-slate-400 mt-0.5">{roleLabel}</p>
             </div>
           </div>
         </div>
 
-      <nav className="flex-1 p-4 space-y-1">
-        {filteredNavItems.map((item) => {
-          const Icon = item.icon
-          const isActive = location.pathname === item.path
-          return (
-            <Link
-              key={item.path}
-              to={item.path}
-              className={clsx(
-                'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
-                isActive 
-                  ? 'bg-amber-500/20 text-amber-400 font-medium' 
-                  : 'text-gray-300 hover:bg-gray-800'
-              )}
-            >
-              <Icon className="w-5 h-5" />
-              {item.label}
-            </Link>
-          )
-        })}
-      </nav>
+        {/* Navigation */}
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          {filteredNavItems.map((item) => {
+            const Icon = item.icon
+            const isActive = location.pathname === item.path || 
+              (item.path !== '/admin' && location.pathname.startsWith(item.path))
+            
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={onClose}
+                className={clsx(
+                  'sidebar-item',
+                  isActive ? 'sidebar-item-active' : ''
+                )}
+              >
+                <Icon className="w-5 h-5 flex-shrink-0" />
+                <span className="font-medium">{item.label}</span>
+              </Link>
+            )
+          })}
+        </nav>
 
-      <div className="p-4 border-t border-gray-700">
-        <p className="text-xs text-gray-500 text-center">v1.12 - Dashboard</p>
-      </div>
+        {/* Footer */}
+        <div className="p-4 border-t border-slate-700">
+          <div className="bg-slate-800 rounded-lg p-3">
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <div className="w-2 h-2 bg-primary-500 rounded-full animate-pulse" />
+              <span>System Operational</span>
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-500 text-center mt-3">v1.12 - Dashboard</p>
+        </div>
       </aside>
     </>
   )

@@ -101,6 +101,8 @@ class _PanicHistoryScreenState extends State<PanicHistoryScreen> {
         return 'Sent';
       case PanicStatus.failed:
         return 'Failed';
+      case PanicStatus.acknowledged:
+        return 'Acknowledged';
       case PanicStatus.responded:
         return 'Responded';
       case PanicStatus.resolved:
@@ -116,6 +118,8 @@ class _PanicHistoryScreenState extends State<PanicHistoryScreen> {
         return Colors.blue;
       case PanicStatus.failed:
         return Colors.red;
+      case PanicStatus.acknowledged:
+        return Colors.teal;
       case PanicStatus.responded:
         return Colors.green;
       case PanicStatus.resolved:
@@ -131,6 +135,8 @@ class _PanicHistoryScreenState extends State<PanicHistoryScreen> {
         return Icons.send;
       case PanicStatus.failed:
         return Icons.error_outline;
+      case PanicStatus.acknowledged:
+        return Icons.thumb_up;
       case PanicStatus.responded:
         return Icons.check_circle;
       case PanicStatus.resolved:
@@ -516,6 +522,8 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
         return 'Sent';
       case PanicStatus.failed:
         return 'Failed';
+      case PanicStatus.acknowledged:
+        return 'Acknowledged';
       case PanicStatus.responded:
         return 'Responded';
       case PanicStatus.resolved:

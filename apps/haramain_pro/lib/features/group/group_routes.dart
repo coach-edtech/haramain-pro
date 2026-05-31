@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:haramain_pro/features/group/models/group_model.dart';
 import 'package:haramain_pro/features/group/services/group_service.dart';
-import 'screens/group_qr_screen.dart';
 import 'screens/group_detail_screen.dart';
 import 'screens/join_group_screen.dart';
 import 'screens/create_group_screen.dart';
@@ -150,9 +149,10 @@ class GroupRoutes {
         }
 
         return BroadcastScreen(
-          group: snapshot.data!,
-          muthawifId: args?['muthawifId'] ?? '',
-          members: args?['members'] ?? [],
+          groupId: groupId,
+          groupName: args?['groupName'] ?? '',
+          currentUserId: args?['currentUserId'] ?? '',
+          currentUserName: args?['currentUserName'] ?? 'Muthawif',
         );
       },
     );

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
-import '../models/group_model.dart';
-import '../services/group_service.dart';
-import 'group_detail_screen.dart';
+import 'package:flutter/services.dart';
+import '../../../design/tokens/app_colors.dart';
+import '../../../design/tokens/app_typography.dart';
+import '../../../design/tokens/app_spacing.dart';
+import '../../../features/group/services/group_service.dart';
 
-/// Screen for Jamaah to join a group via QR or PIN
+/// Join Group via PIN screen
+/// As per FRONTEND-SPEC.md Section 4.4
 class JoinGroupScreen extends StatefulWidget {
   final String userId;
   final String userName;
@@ -19,336 +21,265 @@ class JoinGroupScreen extends StatefulWidget {
   State<JoinGroupScreen> createState() => _JoinGroupScreenState();
 }
 
-class _JoinGroupScreenState extends State<JoinGroupScreen>
-    with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _JoinGroupScreenState extends State<JoinGroupScreen> {
   final _pinController = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
-  String? _errorMessage;
-  bool _isValidating = false;
-
-  // QR Scanner
-  MobileScannerController? _scannerController;
-  bool _hasScanned = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _scannerController = MobileScannerController(
-      detectionSpeed: DetectionSpeed.normal,
-      facing: CameraFacing.back,
-    );
-  }
+  String? _error;
 
   @override
   void dispose() {
-    _tabController.dispose();
     _pinController.dispose();
-    _scannerController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _joinGroup() async {
+    if (_pinController.text.length < 4) {
+      setState(() {
+        _error = 'PIN harus 4 digit atau lebih';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final result = await GroupService.instance.joinGroup(
+        jamaahId: widget.userId,
+        jamaahName: widget.userName,
+        pin: _pinController.text.trim(),
+      );
+
+      if (result.success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Berhasil join grup!'),
+              backgroundColor: AppColors.emerald700,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+              ),
+            ),
+          );
+          Navigator.pop(context, true);
+        }
+      } else {
+        setState(() {
+          _error = result.error ?? 'Gagal join grup';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = 'Terjadi kesalahan. Silakan coba lagi.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.slate50,
       appBar: AppBar(
-        title: const Text('Join Group'),
-        backgroundColor: Theme.of(context).colorScheme.primary,
+        backgroundColor: AppColors.emerald900,
         foregroundColor: Colors.white,
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          tabs: const [
-            Tab(icon: Icon(Icons.qr_code_scanner), text: 'Scan QR'),
-            Tab(icon: Icon(Icons.pin), text: 'Enter PIN'),
-          ],
+        title: Text(
+          'Join Grup',
+          style: AppTypography.titleLarge.copyWith(color: Colors.white),
         ),
+        elevation: 0,
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildQRScannerTab(),
-          _buildPINEntryTab(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQRScannerTab() {
-    return Column(
-      children: [
-        Expanded(
-          child: Stack(
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              MobileScanner(
-                controller: _scannerController,
-                onDetect: _onQRDetected,
-              ),
-              // Overlay with scanning frame
+              const SizedBox(height: AppSpacing.xl),
+
+              // Icon
               Center(
                 child: Container(
-                  width: 250,
-                  height: 250,
+                  width: 80,
+                  height: 80,
                   decoration: BoxDecoration(
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.primary,
-                      width: 3,
-                    ),
-                    borderRadius: BorderRadius.circular(16),
+                    color: AppColors.emerald100,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.group_add,
+                    size: 40,
+                    color: AppColors.emerald700,
                   ),
                 ),
               ),
-              // Instructions
-              Positioned(
-                bottom: 40,
-                left: 0,
-                right: 0,
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 40),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Text(
-                    'Point your camera at the group QR code',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ),
-              if (_isLoading || _isValidating)
-                Container(
-                  color: Colors.black54,
-                  child: const Center(
-                    child: CircularProgressIndicator(color: Colors.white),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        if (_errorMessage != null)
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: Colors.red.shade100,
-            child: Row(
-              children: [
-                const Icon(Icons.error, color: Colors.red),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _errorMessage!,
-                    style: const TextStyle(color: Colors.red),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => setState(() => _errorMessage = null),
-                ),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
 
-  Widget _buildPINEntryTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 40),
-            Icon(
-              Icons.group_add,
-              size: 80,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Enter Group PIN',
-              style: Theme.of(context).textTheme.headlineSmall,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Ask your Muthawif for the 6-digit PIN',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Colors.grey.shade600,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            TextFormField(
-              controller: _pinController,
-              textCapitalization: TextCapitalization.characters,
-              textAlign: TextAlign.center,
-              maxLength: 6,
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 8,
+              const SizedBox(height: AppSpacing.xl),
+
+              // Title
+              Text(
+                'Masukkan PIN Grup',
+                style: AppTypography.headlineMedium.copyWith(
+                  color: AppColors.slate900,
+                ),
+                textAlign: TextAlign.center,
               ),
-              decoration: InputDecoration(
-                hintText: '------',
-                hintStyle: TextStyle(
-                  color: Colors.grey.shade400,
-                  letterSpacing: 8,
+
+              const SizedBox(height: AppSpacing.sm),
+
+              Text(
+                'PIN diberikan oleh muthawif Anda',
+                style: AppTypography.bodyMedium.copyWith(
+                  color: AppColors.slate600,
                 ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(
-                    color: Theme.of(context).colorScheme.primary,
-                    width: 2,
-                  ),
-                ),
-                counterText: '',
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
-                ),
+                textAlign: TextAlign.center,
               ),
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Please enter the PIN';
-                }
-                if (value.length != 6) {
-                  return 'PIN must be 6 characters';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 24),
-            if (_errorMessage != null)
+
+              const SizedBox(height: AppSpacing.xxl),
+
+              // PIN Input
               Container(
-                padding: const EdgeInsets.all(12),
-                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(AppSpacing.lg),
                 decoration: BoxDecoration(
-                  color: Colors.red.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error, color: Colors.red, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _errorMessage!,
-                        style: const TextStyle(color: Colors.red),
-                      ),
+                  color: AppColors.cardLight,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-              ),
-            ElevatedButton(
-              onPressed: _isLoading ? null : _joinWithPIN,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                foregroundColor: Colors.white,
-              ),
-              child: _isLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: _pinController,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      style: AppTypography.headlineLarge.copyWith(
+                        letterSpacing: 8,
+                        fontWeight: FontWeight.bold,
                       ),
-                    )
-                  : const Text(
-                      'Join Group',
-                      style: TextStyle(fontSize: 16),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(8),
+                      ],
+                      decoration: InputDecoration(
+                        hintText: '••••',
+                        hintStyle: AppTypography.headlineLarge.copyWith(
+                          color: AppColors.slate300,
+                          letterSpacing: 8,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                          borderSide: const BorderSide(color: AppColors.slate200),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                          borderSide: const BorderSide(color: AppColors.emerald700, width: 2),
+                        ),
+                        errorBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                          borderSide: const BorderSide(color: AppColors.red600),
+                        ),
+                      ),
+                      onChanged: (_) {
+                        if (_error != null) {
+                          setState(() {
+                            _error = null;
+                          });
+                        }
+                      },
                     ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
-  Future<void> _onQRDetected(BarcodeCapture capture) async {
-    if (_hasScanned || _isValidating) return;
+                    if (_error != null) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Container(
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        decoration: BoxDecoration(
+                          color: AppColors.red100,
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              color: AppColors.red600,
+                              size: 20,
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Text(
+                                _error!,
+                                style: AppTypography.bodySmall.copyWith(
+                                  color: AppColors.red600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
 
-    final barcodes = capture.barcodes;
-    if (barcodes.isEmpty) return;
+              const SizedBox(height: AppSpacing.xl),
 
-    final code = barcodes.first.rawValue;
-    if (code == null || code.isEmpty) return;
+              // Join button
+              SizedBox(
+                height: 56,
+                child: ElevatedButton(
+                  onPressed: _isLoading ? null : _joinGroup,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.emerald700,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: AppColors.slate300,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                    ),
+                    elevation: 0,
+                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : Text(
+                          'Join Grup',
+                          style: AppTypography.titleMedium.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                ),
+              ),
 
-    setState(() {
-      _hasScanned = true;
-      _isValidating = true;
-      _errorMessage = null;
-    });
+              const SizedBox(height: AppSpacing.lg),
 
-    final result = await GroupService.instance.joinGroupViaQR(
-      jamaahId: widget.userId,
-      jamaahName: widget.userName,
-      qrData: code,
-    );
-
-    if (!mounted) return;
-
-    if (result.success) {
-      _onJoinSuccess(result.data!);
-    } else {
-      setState(() {
-        _errorMessage = result.error;
-        _isValidating = false;
-        _hasScanned = false;
-      });
-    }
-  }
-
-  Future<void> _joinWithPIN() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    final pin = _pinController.text.trim().toUpperCase();
-    final result = await GroupService.instance.joinGroup(
-      jamaahId: widget.userId,
-      jamaahName: widget.userName,
-      pin: pin,
-    );
-
-    if (!mounted) return;
-
-    setState(() => _isLoading = false);
-
-    if (result.success) {
-      _onJoinSuccess(result.data!);
-    } else {
-      setState(() => _errorMessage = result.error);
-    }
-  }
-
-  void _onJoinSuccess(GroupModel group) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Successfully joined "${group.name}"!'),
-        backgroundColor: Colors.green,
-      ),
-    );
-
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (context) => GroupDetailScreen(
-          group: group,
-          currentUserId: widget.userId,
+              // Help text
+              Text(
+                'Tidak punya PIN? Hubungi muthawif Anda untuk mendapatkan PIN grup.',
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.slate600,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
       ),
     );

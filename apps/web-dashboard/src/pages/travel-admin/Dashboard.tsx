@@ -30,9 +30,9 @@ export default function TravelAdminDashboard() {
         romonganRes,
         panicRes,
       ] = await Promise.all([
-        supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'pilgrim'),
+        supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'jamaah'),
         supabase.from('rombongans').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-        supabase.from('panic_alerts').select('id', { count: 'exact', head: true }).gte('timestamp', today),
+        supabase.from('panic_alerts').select('id', { count: 'exact', head: true }).gte('created_at', today),
       ])
 
       setStats({
@@ -46,7 +46,7 @@ export default function TravelAdminDashboard() {
       const { data: alerts } = await supabase
         .from('panic_alerts')
         .select('*')
-        .order('timestamp', { ascending: false })
+        .order('created_at', { ascending: false })
         .limit(5)
 
       setRecentAlerts(alerts || [])

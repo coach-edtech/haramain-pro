@@ -4,10 +4,14 @@ export interface Profile {
   id: string
   email: string
   name: string
+  phone?: string
   role: UserRole
   subscription_tier: 'trial' | 'active' | 'expired'
   created_at: string
   agency_id?: string
+  group_name?: string
+  status?: 'active' | 'inactive' | 'suspended'
+  last_seen?: string
 }
 
 export interface Rombongan {
@@ -17,6 +21,8 @@ export interface Rombongan {
   start_date: string
   end_date: string
   status: 'planned' | 'active' | 'completed'
+  muthawif_id?: string | null
+  muthawif_name?: string | null
   created_at: string
 }
 
@@ -50,12 +56,17 @@ export interface DashboardStats {
 export interface SeatLicense {
   id: string
   agency_id: string
-  agency_name: string
+  license_key: string
+  romongan_id: string | null
   total_seats: number
   used_seats: number
   balance: number
-  last_purchase: string
-  status: 'active' | 'low_stock' | 'depleted'
+  valid_until: string | null
+  created_at: string
+  // UI-only computed fields (not stored in DB)
+  agency_name?: string
+  last_purchase?: string
+  status?: 'active' | 'low_stock' | 'depleted'
 }
 
 export interface Travel {
@@ -101,6 +112,9 @@ export interface Jamaah {
   status: 'active' | 'inactive' | 'suspended'
   join_date: string
   last_active: string
+  // Extra fields from profiles table
+  agency_id?: string
+  romongan_id?: string
 }
 
 export interface TeamMember {
@@ -157,5 +171,31 @@ export interface Review {
   rating: number
   comment: string
   travel_id: string
+  created_at: string
+}
+
+export interface EmiPlan {
+  id: string
+  romongan_id: string
+  name: string
+  total_amount: number
+  down_payment: number
+  tenor_months: number
+  monthly_amount: number
+  interest_rate: number
+  status: 'active' | 'completed' | 'cancelled'
+  start_date: string
+  end_date: string
+  created_at: string
+}
+
+export interface Package {
+  id: string
+  romongan_id: string
+  name: string
+  description: string
+  price: number
+  capacity: number
+  included_services: string[]
   created_at: string
 }

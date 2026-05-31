@@ -30,7 +30,7 @@ class _PanicAlertScreenState extends State<PanicAlertScreen> {
   final MapController _mapController = MapController();
   final List<Marker> _markers = [];
   bool _isResponding = false;
-  String? _selectedAction;
+  PanicResponseAction? _selectedAction;
   Timer? _alertTimer;
   bool _audioPlaying = false;
 
@@ -68,7 +68,7 @@ class _PanicAlertScreenState extends State<PanicAlertScreen> {
     _alertTimer = null;
   }
 
-  Future<void> _respond(String action) async {
+  Future<void> _respond(PanicResponseAction action) async {
     if (_isResponding) return;
     
     setState(() {
@@ -81,10 +81,10 @@ class _PanicAlertScreenState extends State<PanicAlertScreen> {
 
     // Update panic status
     await PanicService.instance.updatePanicStatus(
-      widget.alert.id,
-      PanicStatus.responded,
+      alertId: widget.alert.id,
+      status: PanicStatus.responded,
       responderId: widget.responderId,
-      responseType: action,
+      responseType: action.name,
     );
 
     if (mounted) {
@@ -106,7 +106,7 @@ class _PanicAlertScreenState extends State<PanicAlertScreen> {
     }
   }
 
-  String _getActionConfirmationMessage(String action) {
+  String _getActionConfirmationMessage(PanicResponseAction action) {
     switch (action) {
       case PanicResponseAction.stayJemput:
         return 'Response sent: Stay, saya jemput';

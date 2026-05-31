@@ -1,31 +1,240 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Inter', system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  @apply bg-slate-50 text-slate-900;
+}
+
+h1, h2, h3, h4 {
+  @apply font-display;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-100;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400;
 }
 
 @layer components {
+  /* Buttons */
   .btn-primary {
-    @apply bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 transition-colors;
+    @apply bg-primary-600 text-white px-4 py-2 rounded-btn font-medium 
+           hover:bg-primary-700 active:bg-primary-800 
+           transition-colors duration-200 ease-out
+           focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2;
   }
+  
+  .btn-secondary {
+    @apply bg-slate-100 text-slate-700 px-4 py-2 rounded-btn font-medium 
+           hover:bg-slate-200 active:bg-slate-300
+           transition-colors duration-200 ease-out
+           focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-2;
+  }
+  
+  .btn-accent {
+    @apply bg-accent-500 text-white px-4 py-2 rounded-btn font-medium 
+           hover:bg-accent-600 active:bg-accent-700
+           transition-colors duration-200 ease-out
+           focus:outline-none focus:ring-2 focus:ring-accent-400 focus:ring-offset-2;
+  }
+  
   .btn-danger {
-    @apply bg-danger text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors;
+    @apply bg-danger-600 text-white px-4 py-2 rounded-btn font-medium 
+           hover:bg-danger-700 active:bg-danger-800
+           transition-colors duration-200 ease-out
+           focus:outline-none focus:ring-2 focus:ring-danger-500 focus:ring-offset-2;
   }
+
+  /* Cards */
   .card {
-    @apply bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700;
+    @apply bg-white rounded-card shadow-card border border-slate-200;
   }
+
+  .card-elevated {
+    @apply bg-white rounded-card shadow-elevated;
+  }
+
+  /* Inputs */
   .input {
-    @apply w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500;
+    @apply w-full px-3 py-2 border border-slate-200 rounded-input 
+           bg-white text-slate-900
+           placeholder:text-slate-400
+           focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500
+           transition-all duration-200;
+  }
+
+  .input-error {
+    @apply border-danger-500 focus:ring-danger-500 focus:border-danger-500;
+  }
+
+  /* Select */
+  .select {
+    @apply w-full px-3 py-2 border border-slate-200 rounded-input 
+           bg-white text-slate-900 cursor-pointer
+           focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500
+           transition-all duration-200;
+  }
+
+  /* Badge variants */
+  .badge {
+    @apply px-2 py-1 text-xs font-medium rounded-full;
+  }
+
+  .badge-success {
+    @apply bg-primary-100 text-primary-700;
+  }
+
+  .badge-warning {
+    @apply bg-accent-100 text-accent-700;
+  }
+
+  .badge-danger {
+    @apply bg-danger-100 text-danger-700;
+  }
+
+  .badge-info {
+    @apply bg-slate-100 text-slate-700;
+  }
+
+  /* Stats card color variants */
+  .stats-primary {
+    @apply bg-primary-50 text-primary-600;
+  }
+
+  .stats-success {
+    @apply bg-emerald-50 text-emerald-600;
+  }
+
+  .stats-warning {
+    @apply bg-accent-50 text-accent-600;
+  }
+
+  .stats-danger {
+    @apply bg-danger-50 text-danger-600;
+  }
+
+  .stats-info {
+    @apply bg-blue-50 text-blue-600;
+  }
+
+  /* Table styles */
+  .table-header {
+    @apply bg-slate-50 text-xs font-medium text-slate-500 uppercase tracking-wider;
+  }
+
+  .table-row {
+    @apply border-b border-slate-100 hover:bg-slate-50 transition-colors;
+  }
+
+  /* Sidebar */
+  .sidebar-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200;
+    @apply text-slate-300 hover:bg-slate-800 hover:text-white;
+  }
+
+  .sidebar-item-active {
+    @apply bg-primary-900/30 text-accent-400 border-l-4 border-accent-500;
+    @apply hover:bg-primary-900/40 hover:text-accent-400;
+  }
+
+  /* Page header */
+  .page-header {
+    @apply mb-6;
+  }
+
+  .page-title {
+    @apply text-2xl font-bold text-slate-900 font-display;
+  }
+
+  .page-subtitle {
+    @apply text-slate-500 mt-1;
+  }
+
+  /* Alert banners */
+  .alert {
+    @apply p-4 rounded-card border-l-4 flex items-start gap-3;
+  }
+
+  .alert-info {
+    @apply bg-blue-50 border-blue-500 text-blue-800;
+  }
+
+  .alert-success {
+    @apply bg-primary-50 border-primary-500 text-primary-800;
+  }
+
+  .alert-warning {
+    @apply bg-accent-50 border-accent-500 text-accent-800;
+  }
+
+  .alert-danger {
+    @apply bg-danger-50 border-danger-500 text-danger-800;
+  }
+}
+
+/* Animation utilities */
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 200ms ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 300ms ease-out;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 200ms ease-out;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { 
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to { 
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes scaleIn {
+    from { 
+      opacity: 0;
+      transform: scale(0.95);
+    }
+    to { 
+      opacity: 1;
+      transform: scale(1);
+    }
   }
 }

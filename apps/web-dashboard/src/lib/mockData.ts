@@ -1,11 +1,11 @@
 import type { SeatLicense, Travel, Invoice, Jamaah, RedeemCode, TeamMember, SalesAgent, OTAVersion, Payment, Album, Review, PanicAlert } from '../types'
 
 export const mockSeatLicenses: SeatLicense[] = [
-  { id: '1', agency_id: 't1', agency_name: 'PT Umrah Berkah', total_seats: 100, used_seats: 67, balance: 33, last_purchase: '2026-05-10', status: 'active' },
-  { id: '2', agency_id: 't2', agency_name: 'CV Muslim Travel', total_seats: 50, used_seats: 48, balance: 2, last_purchase: '2026-05-08', status: 'low_stock' },
-  { id: '3', agency_id: 't3', agency_name: 'PT Amanah Tours', total_seats: 200, used_seats: 145, balance: 55, last_purchase: '2026-05-12', status: 'active' },
-  { id: '4', agency_id: 't4', agency_name: 'Umrah Express', total_seats: 30, used_seats: 30, balance: 0, last_purchase: '2026-04-20', status: 'depleted' },
-  { id: '5', agency_id: 't5', agency_name: 'Hidayah Travels', total_seats: 75, used_seats: 42, balance: 33, last_purchase: '2026-05-01', status: 'active' },
+  { id: 'lic-1', agency_id: 't1', license_key: 'LIC-UMRAH-001', romongan_id: null, total_seats: 100, used_seats: 67, balance: 33, valid_until: '2027-12-31', created_at: '2026-01-10', agency_name: 'PT Umrah Berkah', last_purchase: '2026-05-10', status: 'active' },
+  { id: 'lic-2', agency_id: 't2', license_key: 'LIC-MUSLIM-002', romongan_id: null, total_seats: 50, used_seats: 48, balance: 2, valid_until: '2027-12-31', created_at: '2026-01-08', agency_name: 'CV Muslim Travel', last_purchase: '2026-05-08', status: 'low_stock' },
+  { id: 'lic-3', agency_id: 't3', license_key: 'LIC-AMANAH-003', romongan_id: null, total_seats: 200, used_seats: 145, balance: 55, valid_until: '2027-12-31', created_at: '2026-01-12', agency_name: 'PT Amanah Tours', last_purchase: '2026-05-12', status: 'active' },
+  { id: 'lic-4', agency_id: 't4', license_key: 'LIC-EXPRESS-004', romongan_id: null, total_seats: 30, used_seats: 30, balance: 0, valid_until: '2027-12-31', created_at: '2026-01-20', agency_name: 'Umrah Express', last_purchase: '2026-04-20', status: 'depleted' },
+  { id: 'lic-5', agency_id: 't5', license_key: 'LIC-HIDAYAH-005', romongan_id: null, total_seats: 75, used_seats: 42, balance: 33, valid_until: '2027-12-31', created_at: '2026-01-01', agency_name: 'Hidayah Travels', last_purchase: '2026-05-01', status: 'active' },
 ]
 
 export const mockTravels: Travel[] = [
@@ -24,12 +24,14 @@ export const mockInvoices: Invoice[] = [
   { id: 'inv5', travel_id: 't5', travel_name: 'Hidayah Travels', amount: 9000000, seat_count: 75, status: 'pending', due_date: '2026-05-28', created_at: '2026-05-10' },
 ]
 
-export const mockJamaah: Jamaah[] = [
-  { id: 'j1', name: 'Ahmad Fauzi', email: 'ahmad.fauzi@email.com', phone: '081234567890', travel_id: 't1', group_name: 'Grup Badr', status: 'active', join_date: '2026-01-15', last_active: '2026-05-14' },
-  { id: 'j2', name: 'Siti Nurhaliza', email: 'siti.n@email.com', phone: '081234567891', travel_id: 't1', group_name: 'Grup Badr', status: 'active', join_date: '2026-02-01', last_active: '2026-05-13' },
-  { id: 'j3', name: 'Budi Santoso', email: 'budi.s@email.com', phone: '081234567892', travel_id: 't2', group_name: 'Grup Cahaya', status: 'active', join_date: '2026-03-10', last_active: '2026-05-12' },
-  { id: 'j4', name: 'Dewi Lestari', email: 'dewi.l@email.com', phone: '081234567893', travel_id: 't3', group_name: 'Grup Muthawwir', status: 'inactive', join_date: '2025-12-01', last_active: '2026-04-20' },
-  { id: 'j5', name: 'Hasanuddin', email: 'hasan.u@email.com', phone: '081234567894', travel_id: 't1', group_name: 'Grup Badr', status: 'active', join_date: '2026-04-15', last_active: '2026-05-14' },
+export const mockJamaah: (Jamaah & { role: string })[] = [
+  { id: 'j1', name: 'Ahmad Fauzi', email: 'ahmad.fauzi@email.com', phone: '081234567890', travel_id: 't1', group_name: 'Grup Badr', status: 'active', join_date: '2026-01-15', last_active: '2026-05-14', role: 'jamaah' },
+  { id: 'j2', name: 'Siti Nurhaliza', email: 'siti.n@email.com', phone: '081234567891', travel_id: 't1', group_name: 'Grup Badr', status: 'active', join_date: '2026-02-01', last_active: '2026-05-13', role: 'jamaah' },
+  { id: 'j3', name: 'Budi Santoso', email: 'budi.s@email.com', phone: '081234567892', travel_id: 't2', group_name: 'Grup Cahaya', status: 'active', join_date: '2026-03-10', last_active: '2026-05-12', role: 'jamaah' },
+  { id: 'j4', name: 'Dewi Lestari', email: 'dewi.l@email.com', phone: '081234567893', travel_id: 't3', group_name: 'Grup Muthawwir', status: 'inactive', join_date: '2025-12-01', last_active: '2026-04-20', role: 'jamaah' },
+  { id: 'j5', name: 'Hasanuddin', email: 'hasan.u@email.com', phone: '081234567894', travel_id: 't1', group_name: 'Grup Badr', status: 'active', join_date: '2026-04-15', last_active: '2026-05-14', role: 'jamaah' },
+  { id: 'j6', name: 'Admin Travel', email: 'admin@travel.com', phone: '081234567895', travel_id: 't1', group_name: 'PT Umrah Berkah', status: 'active', join_date: '2025-01-15', last_active: '2026-05-14', role: 'travel_admin' },
+  { id: 'j7', name: 'Team Support', email: 'support@travel.com', phone: '081234567896', travel_id: 't1', group_name: 'PT Umrah Berkah', status: 'active', join_date: '2025-06-01', last_active: '2026-05-14', role: 'team_support' },
 ]
 
 export const mockRedeemCodes: RedeemCode[] = [

@@ -1,3 +1,8 @@
+// Design System Exports
+// Haramain Pro - Luxury Islamic Aesthetic
+
+library design;
+
 export 'tokens/app_colors.dart';
 export 'tokens/app_typography.dart';
 export 'tokens/app_spacing.dart';

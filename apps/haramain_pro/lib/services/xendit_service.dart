@@ -10,9 +10,8 @@ class XenditService {
   static XenditService get instance => _instance;
   XenditService._internal();
 
-  // TODO: Replace with actual Supabase project URL
   static const String _edgeFunctionUrl =
-      'https://<project-id>.supabase.co/functions/v1/xendit-invoice';
+      'https://muqjlojecjnnntjvhavi.supabase.co/functions/v1/xendit-invoice';
 
   final SupabaseClient _client = Supabase.instance.client;
 
@@ -33,7 +32,7 @@ class XenditService {
         return null;
       }
 
-      final session = await _client.auth.getSession();
+      final session = _client.auth.currentSession;
       if (session == null) {
         debugPrint('XenditService: No active session');
         return null;
